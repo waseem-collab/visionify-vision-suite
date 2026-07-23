@@ -1,0 +1,15 @@
+# Vision Suite — Python dependencies
+#   pip install -r requirements.txt
+
+# --- core: the server will not start without these -------------------------
+flask                 # all three tools are Flask apps, mounted on one port
+requests              # CVAT REST calls (task listing, exports, throttle retries)
+
+# --- computer vision -------------------------------------------------------
+ultralytics           # YOLO inference: auto-annotate, validation, live stream, crops
+opencv-python         # video decode, frame drawing, crop encoding
+numpy                 # grid/heatmap maths in the crop balancer
+
+# --- CVAT integration (Annotation Studio) ----------------------------------
+cvat-sdk              # import tasks, upload/update annotations, class counts
+python-dotenv         # reads CVAT credentials from .env

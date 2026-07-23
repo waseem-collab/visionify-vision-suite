@@ -1,0 +1,53 @@
+# --- Python ---------------------------------------------------------------
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# --- Editor / tooling ------------------------------------------------------
+.claude/settings.local.json
+.vscode/
+.idea/
+.DS_Store
+
+# --- Secrets (keep .env.example, never .env) -------------------------------
+.env
+
+# --- Model weights (too large for git — keep locally, or use LFS/a release) --
+models/
+*.pt
+*.pth
+*.onnx
+*.engine
+
+# --- Media ----------------------------------------------------------------
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.m4v
+
+# --- Generated output ------------------------------------------------------
+# CVAT task exports, unpacked
+imports/
+# ground truth pulled from CVAT for validate / compare runs
+validation/
+# person crops captured from the live stream
+crops/
+# annotated videos rendered by "export"
+exports/
+# balanced crop batches
+person_crops/
+# heatmaps + manifests
+crop_reports/
+# teacher / student mining output
+disagreement_frames/
+
+# --- Per-user runtime state (remembered inputs, caches, run history) --------
+.state/
+web_app_settings.json
+crop_balancer_settings.json
+disagreement_settings.json
+review_settings.json
