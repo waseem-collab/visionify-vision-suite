@@ -29,6 +29,13 @@ models/
 *.webm
 *.m4v
 
+# --- Datasets (images/labels live outside the repo) -------------------------
+# The studio opens whatever folder you point it at; nothing image-shaped is
+# tracked here. sample_dataset/ is a local convenience only.
+sample_dataset/
+dataset/
+datasets/
+
 # --- Generated output ------------------------------------------------------
 # CVAT task exports, unpacked
 imports/
