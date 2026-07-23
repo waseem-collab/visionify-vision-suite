@@ -22,12 +22,18 @@ cp .env.example .env                # fill in CVAT + Azure credentials
 npm run dev                         # or: python3 run.py
 ```
 
-Then open <http://localhost:8000>.
+It prints the URL it actually started on — normally <http://localhost:8000>.
+
+**Ports.** `PORT` is a preference, not a promise. If it's already taken (a stale
+server, another tool, a second copy of the suite) the next free port is used and
+the banner says so, so startup never fails on a busy port. Across auto-reloader
+restarts the port stays put, so your open tabs keep working. Same for each tool
+run standalone.
 
 `npm run dev` runs under Werkzeug's auto-reloader: save any `.py` or the landing
 template and the server restarts, and every open page reloads itself. Set
-`NO_RELOAD=1` to turn that off, `PORT=…` to move the port, `NO_BROWSER=1` to stop
-it opening a tab.
+`NO_RELOAD=1` to turn that off, `PORT=…` to ask for a port, `HOST=…` to change
+the interface, `NO_BROWSER=1` to stop it opening a tab.
 
 Each tool also still runs standalone if you want to work on one in isolation:
 
@@ -44,6 +50,7 @@ python3 apps/crop_balancer_app.py
 ```
 run.py                  entry point — mounts the three apps on one port
 paths.py                every directory and state file, in one place
+ports.py                picks a free port instead of failing on a busy one
 theme.py                the design system: palette, chrome, theme toggle
 templates/landing.html  the app picker at /
 

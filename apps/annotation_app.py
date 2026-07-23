@@ -45,6 +45,7 @@ from flask import Flask, jsonify, redirect, request, send_file, Response
 # the suite launcher (python3 apps/annotation_app.py still works).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import paths
+import ports
 import theme
 
 paths.ensure_dirs()
@@ -7023,6 +7024,10 @@ if __name__ == "__main__":
     ap.add_argument("--host", default=os.getenv("HOST", "127.0.0.1"))
     ap.add_argument("--port", type=int, default=int(os.getenv("PORT", "5000")))
     args = ap.parse_args()
+
+    # --port is only a preference — move up if something already holds it. The
+    # env var keeps the choice stable across --dev reloader restarts.
+    args.port = ports.resolve(args.port, args.host, env_var="ANNOTATION_PORT")
 
     # the reloader imports this module twice; only the worker process prints
     if not args.dev or os.getenv("WERKZEUG_RUN_MAIN") == "true":

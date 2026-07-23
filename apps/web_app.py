@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 # the suite launcher (python3 apps/web_app.py still works).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import paths
+import ports
 # Imported under an alias: `theme` is already a local variable name inside the
 # page renderer, and shadowing the module there would be a nasty surprise.
 import theme as suite_theme
@@ -3084,5 +3085,8 @@ if __name__ == "__main__":
     configure_quiet_logging()
     # Background producer that decodes + annotates frames ahead of playback.
     threading.Thread(target=prerender_worker, daemon=True).start()
-    _open_browser_when_ready("http://127.0.0.1:8500")
-    app.run(host="0.0.0.0", port=8500, debug=False, threaded=True)
+    # 8500 is only a preference — move up if something already holds it.
+    port = ports.resolve(int(os.environ.get("PORT", "8500")))
+    print(f"Inference Web App on http://127.0.0.1:{port}")
+    _open_browser_when_ready(f"http://127.0.0.1:{port}")
+    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)

@@ -13,8 +13,8 @@ const ROOT = join(__dirname, "..");
 const PYTHON = process.env.PYTHON || "python3";
 const PORT = process.env.PORT || "8000";
 
-console.log(`\n  Open it yourself → http://localhost:${PORT}   (auto-reloads on edits)\n`);
-
+// No URL banner here: run.py may land on a different port if this one is taken,
+// so it prints the real address once it knows it.
 const child = spawn(PYTHON, [join(ROOT, "run.py")], {
   cwd: ROOT,
   // NO_BROWSER: don't auto-open a tab. PYTHONUNBUFFERED: stream logs immediately.

@@ -36,6 +36,7 @@ from ultralytics import YOLO
 # the suite launcher (python3 apps/crop_balancer_app.py still works).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import paths
+import ports
 import theme as suite_theme
 
 paths.ensure_dirs()
@@ -2670,8 +2671,8 @@ def _open_browser_when_ready(url, delay_sec=0.8):
 
 
 if __name__ == "__main__":
-    CROPS_ROOT.mkdir(parents=True, exist_ok=True)
-    REPORTS_ROOT.mkdir(parents=True, exist_ok=True)
-    DISAGREE_ROOT.mkdir(parents=True, exist_ok=True)
-    _open_browser_when_ready(f"http://127.0.0.1:{PORT}")
-    app.run(host="0.0.0.0", port=PORT, debug=False, threaded=True)
+    # PORT is only a preference — move up if something already holds it.
+    port = ports.resolve(int(os.environ.get("PORT", PORT)))
+    print(f"Crop Tools on http://127.0.0.1:{port}")
+    _open_browser_when_ready(f"http://127.0.0.1:{port}")
+    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)

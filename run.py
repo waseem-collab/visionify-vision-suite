@@ -22,7 +22,9 @@ request.script_root supplies that mount point, so one hook serves every app.
 
 Run:  python3 run.py        (or: npm run dev)
 """
+import atexit
 import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -32,6 +34,7 @@ from werkzeug.middleware.dispatcher import DispatcherMiddleware
 from werkzeug.serving import run_simple
 
 import paths
+import ports
 import theme
 
 paths.ensure_dirs()
@@ -40,7 +43,12 @@ paths.ensure_dirs()
 from apps import annotation_app, crop_balancer_app, web_app
 
 LANDING_TEMPLATE = paths.ROOT / "templates" / "landing.html"
-PORT = int(os.environ.get("PORT", "8000"))
+HOST = os.environ.get("HOST", "0.0.0.0")
+# PORT is a *preference*, not a promise: if it is taken (a stale server, another
+# tool, a second copy of the suite) we serve on the next port that is free.
+# SUITE_PORT carries the resolved choice to the reloader's child processes so the
+# URL stays put across restarts.
+PORT = ports.resolve(int(os.environ.get("PORT", "8000")), HOST, env_var="SUITE_PORT")
 
 # A token unique to this process. When the dev launcher restarts the server on a
 # file change, the token changes and the injected live-reload script refreshes
@@ -189,6 +197,25 @@ def _open_browser_when_ready(url, delay_sec=1.0):
     threading.Thread(target=_open, daemon=True).start()
 
 
+def _hard_exit(code):
+    """Leave without letting the interpreter finalize.
+
+    The prerender worker is a daemon thread that spends its life inside OpenCV
+    and torch. Daemon threads aren't joined at shutdown, so finalizing the
+    interpreter out from under a native call aborts the process — "terminate
+    called without an active exception" — which under the reloader kills the
+    server instead of restarting it, and drops the port with it.
+
+    So we run the atexit handlers ourselves (web_app registers one to delete a
+    downloaded video), flush our own output, and then exit the hard way, leaving
+    the native runtimes alone.
+    """
+    atexit._run_exitfuncs()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code if isinstance(code, int) else 0)
+
+
 if __name__ == "__main__":
     # Auto-reload on any .py (or the landing template) change — the "npm run dev"
     # behaviour. NO_RELOAD=1 disables it (e.g. for production).
@@ -206,10 +233,20 @@ if __name__ == "__main__":
         print(f"    Inference Web App   {url}/webapp/")
         print(f"    Crop Tools          {url}/crop/\n")
         _open_browser_when_ready(url)
-    run_simple(
-        os.environ.get("HOST", "0.0.0.0"), PORT, application,
-        threaded=True,
-        use_reloader=use_reload,
-        use_debugger=False,
-        extra_files=[str(LANDING_TEMPLATE)],
-    )
+    # The reloader signals "restart me" by raising SystemExit(3) on the main
+    # thread; Ctrl-C arrives as KeyboardInterrupt. Either way we leave through
+    # _hard_exit so the exit code still reaches the watcher parent (3 = restart)
+    # without tripping the shutdown abort described there.
+    try:
+        run_simple(
+            HOST, PORT, application,
+            threaded=True,
+            use_reloader=use_reload,
+            use_debugger=False,
+            extra_files=[str(LANDING_TEMPLATE)],
+        )
+        _hard_exit(0)
+    except SystemExit as exc:
+        _hard_exit(exc.code)
+    except KeyboardInterrupt:
+        _hard_exit(0)
