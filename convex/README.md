@@ -1,63 +1,65 @@
 # Convex functions
 
-This folder holds the Convex backend for the Vision Suite — the queries and
-mutations the Python app calls through `convex_client.py`.
+The Convex backend for the Vision Suite — where crops and annotations are logged
+so you can later build a heatmap of where people appear.
 
-Right now it is an **empty scaffold**: `schema.ts` defines no tables and there
-are no functions yet, so nothing exists on the deployment.
+**Metadata only.** No image bytes are ever stored: just filenames, video, frame
+numbers, YOLO coordinates and annotation labels. A crop row is ~0.4 KB, so even
+100k crops is ~40 MB — comfortably inside the free tier. The images stay on disk.
 
-## Getting started (when you're ready to add data)
+## Data model (`schema.ts`)
 
-1. Install the npm dependency (declared in the repo's `package.json`):
+- **crops** — one row per saved crop, from any tool. `filename` (unique), `video`,
+  `frame`, YOLO `cx/cy/w/h`, `source` (`inference_webapp` | `crop_balancer` |
+  `ppe`), optional `conf`, `savedAt`. The `cx/cy` are what a heatmap plots.
+- **annotations** — one row per saved annotation. `image` (unique), the drawn
+  `boxes` (YOLO cls/cx/cy/w/h + className), and — when the image is a crop we
+  made — `crop`/`video`/`frame` linking it back to the source crop and frame.
 
-   ```bash
-   npm install
-   ```
+Both upsert by their unique key, so re-running a video or re-saving an image
+updates in place instead of duplicating.
 
-2. Link this folder to your deployment and start the dev sync. This logs you in
-   and generates `convex/_generated/` (the typed API):
+## Functions
 
-   ```bash
-   npx convex dev
-   ```
+- `crops:record` (mutation) — log a crop. Called by the app.
+- `crops:forHeatmap` (query) — `{cx,cy,w,h,video,frame}` for every crop, optionally
+  filtered to one `video`. This is what a heatmap reads.
+- `crops:videos` (query) — distinct videos with crop counts (for a picker).
+- `annotations:record` (mutation) — log an annotation.
+- `annotations:recent` (query) — latest annotations, for a sanity view.
 
-   It writes `CONVEX_DEPLOYMENT` / `CONVEX_URL` into `.env.local` for the CLI.
-   The Python app reads its own `CONVEX_URL` from `.env` (see `.env.example`).
+Writes are gated by a shared secret (see Auth below).
 
-3. Add tables to `schema.ts` and write functions here, e.g. `crops.ts`:
+## Activate it (one-time)
 
-   ```ts
-   import { query } from "./_generated/server";
-   export const list = query({ handler: async (ctx) => ctx.db.query("crops").collect() });
-   ```
+From the repo root:
 
-4. Call them from Python:
+```bash
+npm install                                   # gets the convex CLI + npm deps
+npx convex dev                                # log in, link the deployment, deploy these functions
+npx convex env set CONVEX_SHARED_SECRET <the value from your .env>
+```
 
-   ```python
-   from convex_client import get_client
-   get_client().query("crops:list", {})
-   ```
+`npx convex dev` generates `convex/_generated/` (the typed API) and pushes the
+functions live. Keep it running while developing, or use `npx convex deploy` for
+a one-off push. The app reads `CONVEX_URL` and `CONVEX_SHARED_SECRET` from `.env`;
+the deployment needs the **same** secret set via `npx convex env set`.
+
+Once deployed, every crop and annotation the tools save is logged automatically.
+Verify with `GET /api/convex/status` (shows `logging.sent` climbing) or in the
+Convex dashboard's Data tab.
 
 ## Auth — server identity (not Clerk)
 
-This suite is a trusted backend tool, so it does **not** use Clerk end-user auth.
-Clerk logs users in from a browser and mints short-lived per-user JWTs, which
-don't map onto a serverless Python app. Instead, when we add functions they
-should authorize the server directly, one of:
+This suite is a trusted backend, so it does **not** use Clerk end-user auth
+(short-lived per-user browser JWTs don't fit a serverless Python app). Every
+write carries `CONVEX_SHARED_SECRET`, which `convex/lib/auth.ts` checks against
+the same value set on the deployment. No expiring tokens. `CONVEX_AUTH_TOKEN`
+(`set_auth`) stays available for a future token-based caller but is unused.
 
-- **Shared secret argument** — the app passes a secret (e.g. `CONVEX_SHARED_SECRET`
-  from `.env`) as a function argument, and each function checks it before acting.
-  Simple and explicit.
-- **Convex admin key** — the Python client calls `set_admin_auth(deploy_key)` for
-  full-access server calls. Powerful (bypasses function-level checks), so reserve
-  it for trusted server contexts and keep `CONVEX_DEPLOY_KEY` secret.
+## Building the heatmap (later)
 
-Either way there are no expiring tokens to refresh. `CONVEX_AUTH_TOKEN`
-(`set_auth`) remains available for a future token-based caller but is unused
-today.
-
-## Deploying
-
-`npx convex dev` pushes changes live while you work. For a one-off or CI deploy
-use `npx convex deploy` (set `CONVEX_DEPLOY_KEY` in the environment for a
-non-interactive push).
+`crops:forHeatmap` gives you every `(cx, cy)` — bin them into a grid and count to
+get a density map, per video or across all. The suite already has heatmap drawing
+in the Crop Balancer; this just makes it queryable from the accumulated database
+instead of a single run.

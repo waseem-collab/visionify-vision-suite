@@ -63,6 +63,12 @@ def auth_token():
     return (os.environ.get("CONVEX_AUTH_TOKEN") or "").strip()
 
 
+def shared_secret():
+    """The server-identity secret sent with write calls (see convex/lib/auth.ts)."""
+    _load_env()
+    return (os.environ.get("CONVEX_SHARED_SECRET") or "").strip()
+
+
 def is_configured():
     return bool(convex_url())
 

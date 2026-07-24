@@ -175,8 +175,10 @@ def convex_status():
         return {"configured": False, "url": "", "reachable": False, "authed": False,
                 "detail": "CONVEX_URL not set in .env"}
     ok, detail = convex_client.ping()
+    import db_log
     return {"configured": True, "url": url, "reachable": ok,
-            "authed": bool(convex_client.auth_token()), "detail": detail}
+            "authed": bool(convex_client.auth_token()),
+            "logging": db_log.stats(), "detail": detail}
 
 
 @shell.get("/__livereload__")

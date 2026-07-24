@@ -36,6 +36,7 @@ from ultralytics import YOLO
 # the suite launcher (python3 apps/crop_balancer_app.py still works).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import cropnames
+import db_log
 import paths
 import ports
 import theme as suite_theme
@@ -623,6 +624,10 @@ def process_one_video(video_path, model, total, rows, cols, conf, stride, report
             # <video>_<frame>_<yolo cx-cy-w-h>.jpg (shared across every tool).
             fname = cropnames.yolo_crop_name(video_stem, fidx, (x1, y1, x2, y2), fw, fh)
             cv2.imwrite(str(out_dir / fname), crop)
+            # Best-effort metadata log to Convex (never blocks, never raises).
+            bcx, bcy, bw, bh = cropnames.yolo_coords((x1, y1, x2, y2), fw, fh)
+            db_log.record_crop(fname, video_stem, fidx, bcx, bcy, bw, bh,
+                               source="crop_balancer", conf=d["conf"])
             per_cell_counts[r][c] += 1
             manifest["crops"].append(
                 {"file": fname, "cell": [r, c], "frame": fidx,

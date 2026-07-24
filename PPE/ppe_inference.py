@@ -21,6 +21,7 @@ from ultralytics import YOLO
 # Repo root on the path so this stays runnable standalone (python3 PPE/ppe_inference.py).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import cropnames
+import db_log
 import paths
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -345,6 +346,10 @@ def save_person_crop(frame, frame_idx, person_idx, person_box, output_dir=None,
     if crop.size == 0:
         return None
     cv2.imwrite(save_path, crop)
+    # Best-effort metadata log to Convex (never blocks, never raises).
+    cx, cy, bw, bh = cropnames.yolo_coords((x1p, y1p, x2p, y2p), w, h)
+    db_log.record_crop(save_name, cropnames.clean_video_name(video_name or "video"),
+                       frame_idx, cx, cy, bw, bh, source="ppe")
     return save_path
 
 

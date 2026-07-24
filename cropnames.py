@@ -35,12 +35,51 @@ def yolo_crop_name(video_name, frame_idx, box, frame_w, frame_h, ext=".jpg"):
     is normalised against. Dashes join the four coordinates so the underscores
     stay as the top-level separator between name, frame and coordinates.
     """
+    cx, cy, w, h = yolo_coords(box, frame_w, frame_h)
+    stem = clean_video_name(video_name)
+    return f"{stem}_{int(frame_idx):06d}_{cx:.6f}-{cy:.6f}-{w:.6f}-{h:.6f}{ext}"
+
+
+def yolo_coords(box, frame_w, frame_h):
+    """(x1,y1,x2,y2) pixel box → YOLO (cx, cy, w, h) normalised to the frame.
+
+    The single source of truth for both the filename and the database record, so
+    a crop's coordinates in Convex always match the coordinates in its name.
+    """
     x1, y1, x2, y2 = (float(v) for v in box[:4])
     fw = max(float(frame_w), 1.0)
     fh = max(float(frame_h), 1.0)
-    cx = ((x1 + x2) / 2.0) / fw
-    cy = ((y1 + y2) / 2.0) / fh
-    w = (x2 - x1) / fw
-    h = (y2 - y1) / fh
-    stem = clean_video_name(video_name)
-    return f"{stem}_{int(frame_idx):06d}_{cx:.6f}-{cy:.6f}-{w:.6f}-{h:.6f}{ext}"
+    return (
+        ((x1 + x2) / 2.0) / fw,
+        ((y1 + y2) / 2.0) / fh,
+        (x2 - x1) / fw,
+        (y2 - y1) / fh,
+    )
+
+
+# <video>_<frame>_<cx>-<cy>-<w>-<h>.<ext>  — the shape yolo_crop_name() produces.
+_CROP_RE = re.compile(
+    r"^(?P<video>.+)_(?P<frame>\d{6})_"
+    r"(?P<cx>[\d.]+)-(?P<cy>[\d.]+)-(?P<w>[\d.]+)-(?P<h>[\d.]+)\.[^.]+$"
+)
+
+
+def parse_crop_name(filename):
+    """Pull (video, frame, cx, cy, w, h) back out of a crop filename.
+
+    Returns a dict, or None if the name isn't one we generated — lets the
+    annotation logger link an annotated image back to its source crop/frame
+    when the name matches, and skip the link cleanly when it doesn't.
+    """
+    m = _CROP_RE.match(os.path.basename(str(filename)))
+    if not m:
+        return None
+    try:
+        return {
+            "video": m.group("video"),
+            "frame": int(m.group("frame")),
+            "cx": float(m.group("cx")), "cy": float(m.group("cy")),
+            "w": float(m.group("w")), "h": float(m.group("h")),
+        }
+    except ValueError:
+        return None

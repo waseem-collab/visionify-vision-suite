@@ -44,6 +44,8 @@ from flask import Flask, jsonify, redirect, request, send_file, Response
 # Repo root on the path so this module can be imported directly as well as via
 # the suite launcher (python3 apps/annotation_app.py still works).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import cropnames
+import db_log
 import paths
 import ports
 import theme
@@ -341,7 +343,29 @@ def api_save(idx):
     data = request.get_json(force=True)
     boxes = data.get("boxes", [])
     write_label(IMAGES[idx], boxes)
+    _log_annotation(IMAGES[idx], boxes)
     return jsonify({"ok": True, "saved": IMAGES[idx], "n": len(boxes)})
+
+
+def _log_annotation(img_name, boxes):
+    """Best-effort: mirror a saved annotation to Convex (never blocks/raises).
+
+    When the image is a crop we produced, its name links back to the source
+    crop, video and frame — the chain the heatmap follows."""
+    enriched = []
+    for b in boxes:
+        row = dict(b)
+        cls = int(b.get("cls", 0))
+        if 0 <= cls < len(CLASSES):
+            row["className"] = CLASSES[cls]
+        enriched.append(row)
+    link = cropnames.parse_crop_name(img_name)
+    db_log.record_annotation(
+        img_name, enriched,
+        crop=img_name if link else None,
+        video=link["video"] if link else None,
+        frame=link["frame"] if link else None,
+    )
 
 
 @app.route("/api/delete/<int:idx>", methods=["POST"])

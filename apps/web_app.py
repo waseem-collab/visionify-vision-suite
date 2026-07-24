@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 # the suite launcher (python3 apps/web_app.py still works).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import cropnames
+import db_log
 import paths
 import ports
 # Imported under an alias: `theme` is already a local variable name inside the
@@ -1003,6 +1004,11 @@ def save_frame_image(frame, subdir: str, suffix: str = "",
         filename = f"{stem}_frame_{frame_idx:06d}{suffix_part}_{stamp}.jpg"
     save_path = target_dir / filename
     cv2.imwrite(str(save_path), frame)
+    # Best-effort: log the crop's metadata to Convex (never blocks, never raises).
+    if crop_box is not None and frame_size is not None:
+        cx, cy, w, h = cropnames.yolo_coords(crop_box, frame_size[0], frame_size[1])
+        db_log.record_crop(filename, cropnames.clean_video_name(base), frame_idx,
+                           cx, cy, w, h, source="inference_webapp")
     return str(save_path)
 
 

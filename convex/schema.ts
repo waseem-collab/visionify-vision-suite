@@ -1,20 +1,48 @@
-import { defineSchema } from "convex/server";
+import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
 
-// Intentionally empty — no tables defined yet.
-//
-// Add tables here when you're ready to model data, e.g.:
-//
-//   import { defineSchema, defineTable } from "convex/server";
-//   import { v } from "convex/values";
-//
-//   export default defineSchema({
-//     crops: defineTable({
-//       video: v.string(),
-//       frame: v.number(),
-//       box: v.array(v.number()),   // [cx, cy, w, h] in YOLO format
-//     }),
-//   });
-//
-// Until then this defines the schema as having no tables, which creates nothing
-// on the deployment.
-export default defineSchema({});
+// Metadata only — filenames, frames and YOLO coordinates, never image bytes.
+// That keeps the whole thing tiny (well inside the free tier) while carrying
+// everything a heatmap needs: where people were, per video and frame.
+export default defineSchema({
+  // One row per saved crop, from any tool (inference web app, crop balancer, PPE).
+  crops: defineTable({
+    filename: v.string(), // e.g. Dyecoats_000120_0.48-0.38-0.20-0.52.jpg (unique key)
+    video: v.string(), //    source video stem
+    frame: v.number(), //    frame index within that video
+    // YOLO box, normalised to the full frame — this is what the heatmap plots.
+    cx: v.number(),
+    cy: v.number(),
+    w: v.number(),
+    h: v.number(),
+    source: v.string(), //   "inference_webapp" | "crop_balancer" | "ppe"
+    conf: v.optional(v.number()), // detector confidence, when known
+    savedAt: v.number(), //  epoch ms
+  })
+    .index("by_filename", ["filename"])
+    .index("by_video", ["video"]),
+
+  // One row per saved annotation. Linked to a crop by filename when the annotated
+  // image is one we produced (crop === filename); video/frame are denormalised
+  // from the crop name so a heatmap can be built from annotations alone too.
+  annotations: defineTable({
+    image: v.string(), //    the image file that was annotated (unique key)
+    crop: v.optional(v.string()), // matching crop filename, if the image is a crop
+    video: v.optional(v.string()),
+    frame: v.optional(v.number()),
+    boxes: v.array(
+      v.object({
+        cls: v.number(),
+        cx: v.number(),
+        cy: v.number(),
+        w: v.number(),
+        h: v.number(),
+        className: v.optional(v.string()),
+      })
+    ),
+    savedAt: v.number(),
+  })
+    .index("by_image", ["image"])
+    .index("by_crop", ["crop"])
+    .index("by_video", ["video"]),
+});
