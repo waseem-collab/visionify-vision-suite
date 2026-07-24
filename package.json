@@ -7,8 +7,13 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "start": "python3 run.py",
-    "setup": "pip install -r requirements.txt"
+    "setup": "pip install -r requirements.txt",
+    "convex:dev": "convex dev",
+    "convex:deploy": "convex deploy"
   },
   "keywords": ["yolo", "annotation", "cvat", "inference", "ppe", "computer-vision"],
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "convex": "^1.17.0"
+  }
 }

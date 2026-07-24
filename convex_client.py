@@ -57,6 +57,12 @@ def convex_url():
     return (os.environ.get("CONVEX_URL") or "").strip().rstrip("/")
 
 
+def auth_token():
+    """The auth token used to call authenticated functions, or "" if unset."""
+    _load_env()
+    return (os.environ.get("CONVEX_AUTH_TOKEN") or "").strip()
+
+
 def is_configured():
     return bool(convex_url())
 
@@ -65,7 +71,8 @@ def get_client():
     """Return a shared ConvexClient, or None if CONVEX_URL is unset.
 
     The client connects lazily on the first function call, so building it here
-    touches no network and creates nothing on the deployment.
+    touches no network and creates nothing on the deployment. If CONVEX_AUTH_TOKEN
+    is set, it is applied so authenticated functions can be called.
     """
     global _client
     url = convex_url()
@@ -74,7 +81,11 @@ def get_client():
     with _lock:
         if _client is None:
             from convex import ConvexClient
-            _client = ConvexClient(url)
+            client = ConvexClient(url)
+            token = auth_token()
+            if token:
+                client.set_auth(token)
+            _client = client
         return _client
 
 

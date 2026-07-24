@@ -172,10 +172,11 @@ def convex_status():
     Convex function, so it reads and writes nothing on the deployment."""
     url = convex_client.convex_url()
     if not convex_client.is_configured():
-        return {"configured": False, "url": "", "reachable": False,
+        return {"configured": False, "url": "", "reachable": False, "authed": False,
                 "detail": "CONVEX_URL not set in .env"}
     ok, detail = convex_client.ping()
-    return {"configured": True, "url": url, "reachable": ok, "detail": detail}
+    return {"configured": True, "url": url, "reachable": ok,
+            "authed": bool(convex_client.auth_token()), "detail": detail}
 
 
 @shell.get("/__livereload__")
@@ -293,8 +294,9 @@ if __name__ == "__main__":
         print(f"    Crop Tools          {url}/crop/\n")
         if convex_client.is_configured():
             ok, detail = convex_client.ping()
+            auth = "auth token set" if convex_client.auth_token() else "no auth token"
             print(f"  Convex: {convex_client.convex_url()} "
-                  f"({'reachable' if ok else 'UNREACHABLE — ' + detail})\n")
+                  f"({'reachable' if ok else 'UNREACHABLE — ' + detail}, {auth})\n")
         else:
             print("  Convex: not configured (set CONVEX_URL in .env)\n")
         _open_browser_when_ready(url)
