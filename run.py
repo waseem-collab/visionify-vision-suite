@@ -237,6 +237,39 @@ def heatmap_data():
     return {"cols": cols, "rows": rows, "cells": grid, "max": peak, "count": count}
 
 
+@shell.get("/api/heatmap/unknown")
+def heatmap_unknown():
+    """Cameras found in crops that aren't in the registry — drives the prompt."""
+    try:
+        return {"cameras": _convex_query("crops:unknownCameras", {}) or []}
+    except Exception as exc:
+        return {"cameras": [], "error": str(exc)}
+
+
+@shell.post("/api/heatmap/register")
+def heatmap_register():
+    """Add a discovered camera to the registry and back-fill its crops."""
+    client = convex_client.get_client()
+    if client is None:
+        return {"ok": False, "error": "Convex not configured"}, 400
+    payload = request.get_json(silent=True) or {}
+    company = str(payload.get("company", "")).strip()
+    site = str(payload.get("site", "")).strip()
+    camera = str(payload.get("camera", "")).strip()
+    if not (company and site and camera):
+        return {"ok": False, "error": "company, site and camera are all required"}, 400
+    try:
+        res = client.mutation("cameras:register", {
+            "secret": convex_client.shared_secret(),
+            "company": company, "site": site, "camera": camera,
+        })
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}, 502
+    import cameras as _cams
+    _cams.refresh()  # so newly-arriving crops from this camera auto-tag
+    return {"ok": True, "tagged": (res or {}).get("tagged", 0)}
+
+
 @shell.get("/heatmap")
 def heatmap_page():
     page = (paths.ROOT / "templates" / "heatmap.html").read_text(encoding="utf-8")

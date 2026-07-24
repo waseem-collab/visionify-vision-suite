@@ -1,6 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { assertSecret } from "./lib/auth";
+import { guessCameraName } from "./lib/cameraName";
 
 // Record one saved crop. Upserts by filename, so re-running the same video (the
 // crop names are deterministic) updates rather than duplicates.
@@ -90,6 +91,23 @@ export const forHeatmap = query({
       w: r.w,
       h: r.h,
     }));
+  },
+});
+
+// Crops that came from a camera NOT in the registry, grouped by the camera name
+// guessed from the video. Powers the "new camera detected" prompt.
+export const unknownCameras = query({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("crops").collect();
+    const groups: Record<string, { camera: string; count: number; sampleVideo: string }> = {};
+    for (const r of rows) {
+      if (r.camera) continue; // already tagged to a known camera
+      const g = guessCameraName(r.video);
+      if (!groups[g]) groups[g] = { camera: g, count: 0, sampleVideo: r.video };
+      groups[g].count++;
+    }
+    return Object.values(groups).sort((a, b) => b.count - a.count);
   },
 });
 

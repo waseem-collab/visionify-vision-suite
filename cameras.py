@@ -10,10 +10,21 @@ video stem against it, returning the camera's (company, site, camera).
 Used by the crop logger to tag each crop with its camera, so the heatmap can
 filter by company / site / camera.
 """
+import re
 import threading
 
 import convex_client
 import cropnames
+
+# Trailing date/time on a video stem, e.g. "_20260722-052339" or "_20260706_142252".
+_DATE_SUFFIX = re.compile(r"_\d{6,8}([_-]\d{2,6})*$")
+
+
+def guess_camera_name(video_stem):
+    """Camera name guessed from a video stem by stripping a trailing date/time.
+    Kept in sync with convex/lib/cameraName.ts."""
+    stem = cropnames.clean_video_name(video_stem)
+    return _DATE_SUFFIX.sub("", stem) or stem
 
 _lock = threading.Lock()
 _registry = None  # list of (camera, company, site), sorted longest-name-first

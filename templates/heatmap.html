@@ -60,6 +60,38 @@ __THEME__
     font-size:11px;color:var(--text-muted);margin-left:7px;}
   .legend-row{display:flex;align-items:stretch;gap:0;height:100%;}
   @media (max-width:720px){ .filters{grid-template-columns:1fr 1fr;} }
+
+  /* "New cameras" prompt */
+  .newcam-badge{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--warn);
+    background:var(--warn-soft);border:1px solid var(--warn);border-radius:var(--r);padding:7px 12px;cursor:pointer;}
+  .newcam-badge:hover{filter:brightness(1.06);}
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:100;padding:20px;}
+  .modal-bg.open{display:flex;}
+  .modal{background:var(--surface);border:1px solid var(--border-2);border-radius:var(--r-lg);max-width:580px;width:100%;
+    max-height:85vh;overflow:auto;box-shadow:var(--sh-lg);}
+  .modal-h{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;}
+  .modal-h h3{margin:0;font-size:16px;font-weight:650;display:flex;align-items:center;gap:9px;}
+  .modal-h h3 .dotw{width:8px;height:8px;border-radius:50%;background:var(--warn);}
+  .modal-h .x{margin-left:auto;cursor:pointer;color:var(--text-muted);background:none;border:none;font-size:22px;line-height:1;}
+  .modal-b{padding:16px 20px;}
+  .modal-b > p{margin:0 0 14px;color:var(--text-muted);font-size:13px;line-height:1.55;}
+  .ncrow{border:1px solid var(--border);border-radius:var(--r);padding:12px 13px;margin-bottom:11px;}
+  .ncrow .name{font-family:var(--mono);font-weight:700;color:var(--text);font-size:13.5px;}
+  .ncrow .meta{font-size:11.5px;color:var(--text-muted);margin:2px 0 11px;word-break:break-all;}
+  .ncrow .inputs{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end;}
+  .field-lil{display:flex;flex-direction:column;gap:4px;min-width:0;}
+  .field-lil label{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);}
+  .ncrow input{height:34px;padding:7px 9px;font-size:13px;color:var(--text);background:var(--surface-2);
+    border:1px solid var(--border-2);border-radius:var(--r);}
+  .ncrow input:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring);}
+  .ncrow .addbtn{height:34px;padding:0 15px;font-weight:600;color:var(--accent-fg);background:var(--accent);
+    border:none;border-radius:var(--r);cursor:pointer;white-space:nowrap;}
+  .ncrow .addbtn:hover{background:var(--accent-hover);}
+  .ncrow .addbtn:disabled{opacity:.55;cursor:default;}
+  .ncrow.done{opacity:.6;}
+  .ncrow.done .inputs{display:none;}
+  .ncrow .donemsg{color:var(--ok);font-size:12.5px;font-weight:600;margin-top:9px;display:none;}
+  .ncrow.done .donemsg{display:block;}
 </style>
 </head>
 <body>
@@ -83,6 +115,7 @@ __THEME__
 
     <div class="toolbar">
       <span class="count" id="count">— crops</span>
+      <button class="newcam-badge" id="newcam" hidden></button>
       <button class="reset" id="reset">Reset filters</button>
       <span class="resbox">Resolution <input type="range" id="res" min="16" max="72" step="4" value="40"><span id="resval" class="mono">40</span></span>
     </div>
@@ -103,6 +136,18 @@ __THEME__
   </div>
 
   <div class="tip" id="tip"></div>
+
+  <div class="modal-bg" id="ncmodal">
+    <div class="modal">
+      <div class="modal-h"><h3><span class="dotw"></span>New cameras detected</h3><button class="x" id="nc_close" title="Close">×</button></div>
+      <div class="modal-b">
+        <p>These cameras appear in your logged crops but aren't in the registry. Add each to a company and site so its crops show up on the heatmap. The camera name comes from the video and is used to match future clips automatically.</p>
+        <div id="nclist"></div>
+        <datalist id="dl_companies"></datalist>
+        <datalist id="dl_sites"></datalist>
+      </div>
+    </div>
+  </div>
 
 <script>
 __THEME_JS__
@@ -239,7 +284,68 @@ $('reset').addEventListener('click', () => {
   $('f_company').value = ''; fillSites(); fillCameras(); $('f_class').value = ''; draw();
 });
 
-(async () => { await loadMeta(); await draw(); })();
+// ---- "New cameras" detection + prompt ----
+let UNKNOWN = [];
+async function loadUnknown(){
+  try { UNKNOWN = (await fetch('/api/heatmap/unknown').then(r => r.json())).cameras || []; }
+  catch(e){ UNKNOWN = []; }
+  const n = UNKNOWN.length, badge = $('newcam');
+  badge.hidden = n === 0;
+  badge.textContent = '⚠ ' + n + ' new camera' + (n === 1 ? '' : 's');
+  return n;
+}
+function renderUnknownModal(){
+  const comps = [...new Set(CAMERAS.map(c => c.company))].sort();
+  const sites = [...new Set(CAMERAS.map(c => c.site))].sort();
+  $('dl_companies').innerHTML = comps.map(c => `<option value="${c.replace(/"/g,'&quot;')}">`).join('');
+  $('dl_sites').innerHTML = sites.map(s => `<option value="${s.replace(/"/g,'&quot;')}">`).join('');
+  const list = $('nclist'); list.innerHTML = '';
+  if (!UNKNOWN.length){ list.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">No new cameras right now.</p>'; return; }
+  UNKNOWN.forEach((u) => {
+    const esc = (s) => String(s).replace(/</g,'&lt;');
+    const row = document.createElement('div'); row.className = 'ncrow';
+    row.innerHTML =
+      '<div class="name">' + esc(u.camera) + '</div>' +
+      '<div class="meta">' + u.count + ' crop' + (u.count===1?'':'s') + ' · e.g. ' + esc(u.sampleVideo) + '</div>' +
+      '<div class="inputs">' +
+        '<div class="field-lil"><label>Company</label><input list="dl_companies" placeholder="Company" data-k="company"></div>' +
+        '<div class="field-lil"><label>Site</label><input list="dl_sites" placeholder="Site" data-k="site"></div>' +
+        '<button class="addbtn">Add</button>' +
+      '</div>' +
+      '<div class="donemsg"></div>';
+    const comp = row.querySelector('[data-k=company]'), st = row.querySelector('[data-k=site]'), btn = row.querySelector('.addbtn');
+    btn.addEventListener('click', async () => {
+      const company = comp.value.trim(), site = st.value.trim();
+      comp.style.borderColor = company ? '' : 'var(--danger)';
+      st.style.borderColor = site ? '' : 'var(--danger)';
+      if (!company || !site) return;
+      btn.disabled = true; btn.textContent = 'Adding…';
+      try {
+        const res = await fetch('/api/heatmap/register', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ company, site, camera: u.camera }),
+        }).then(r => r.json());
+        if (res.ok){
+          row.classList.add('done');
+          row.querySelector('.donemsg').textContent = '✓ Added to ' + company + ' / ' + site + ' — ' + res.tagged + ' crop' + (res.tagged===1?'':'s') + ' tagged.';
+          await loadMeta(); await loadUnknown(); await draw();
+        } else { btn.disabled = false; btn.textContent = 'Retry'; }
+      } catch(e){ btn.disabled = false; btn.textContent = 'Retry'; }
+    });
+    list.appendChild(row);
+  });
+}
+function openUnknownModal(){ renderUnknownModal(); $('ncmodal').classList.add('open'); }
+$('newcam').addEventListener('click', openUnknownModal);
+$('nc_close').addEventListener('click', () => $('ncmodal').classList.remove('open'));
+$('ncmodal').addEventListener('click', (e) => { if (e.target === $('ncmodal')) $('ncmodal').classList.remove('open'); });
+
+(async () => {
+  await loadMeta();
+  await draw();
+  if (await loadUnknown() > 0) openUnknownModal();   // pop up once when new cameras exist
+  setInterval(loadUnknown, 20000);                    // keep the badge fresh (no re-popup)
+})();
 </script>
 </body>
 </html>
