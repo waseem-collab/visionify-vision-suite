@@ -13,3 +13,6 @@ numpy                 # grid/heatmap maths in the crop balancer
 # --- CVAT integration (Annotation Studio) ----------------------------------
 cvat-sdk              # import tasks, upload/update annotations, class counts
 python-dotenv         # reads CVAT credentials from .env
+
+# --- Convex backend --------------------------------------------------------
+convex                # Convex client — call deployment functions from Python

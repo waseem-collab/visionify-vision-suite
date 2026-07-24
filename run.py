@@ -34,6 +34,7 @@ from flask import Flask, Response, redirect, request
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
 from werkzeug.serving import run_simple
 
+import convex_client
 import paths
 import ports
 import theme
@@ -165,6 +166,18 @@ def home_redirect():
     return redirect("/")
 
 
+@shell.get("/api/convex/status")
+def convex_status():
+    """Read-only connection check: is Convex configured and reachable? Calls no
+    Convex function, so it reads and writes nothing on the deployment."""
+    url = convex_client.convex_url()
+    if not convex_client.is_configured():
+        return {"configured": False, "url": "", "reachable": False,
+                "detail": "CONVEX_URL not set in .env"}
+    ok, detail = convex_client.ping()
+    return {"configured": True, "url": url, "reachable": ok, "detail": detail}
+
+
 @shell.get("/__livereload__")
 def livereload_token():
     return START_TOKEN, 200, {"Content-Type": "text/plain"}
@@ -278,6 +291,12 @@ if __name__ == "__main__":
         print(f"    Annotation Studio   {url}/annotate/")
         print(f"    Inference Web App   {url}/webapp/")
         print(f"    Crop Tools          {url}/crop/\n")
+        if convex_client.is_configured():
+            ok, detail = convex_client.ping()
+            print(f"  Convex: {convex_client.convex_url()} "
+                  f"({'reachable' if ok else 'UNREACHABLE — ' + detail})\n")
+        else:
+            print("  Convex: not configured (set CONVEX_URL in .env)\n")
         _open_browser_when_ready(url)
     # The reloader signals "restart me" by raising SystemExit(3) on the main
     # thread; Ctrl-C arrives as KeyboardInterrupt. Either way we leave through
