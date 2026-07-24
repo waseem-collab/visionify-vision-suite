@@ -20,6 +20,7 @@ from urllib.parse import urlparse
 # Repo root on the path so this module can be imported directly as well as via
 # the suite launcher (python3 apps/web_app.py still works).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import cropnames
 import paths
 import ports
 # Imported under an alias: `theme` is already a local variable name inside the
@@ -983,14 +984,23 @@ def process_frame_to_jpg(frame):
     return commit_render(jpg, person_boxes, raw, error)
 
 
-def save_frame_image(frame, subdir: str, suffix: str = "") -> str:
+def save_frame_image(frame, subdir: str, suffix: str = "",
+                     crop_box=None, frame_size=None) -> str:
     target_dir = CROPS_ROOT / subdir
     target_dir.mkdir(parents=True, exist_ok=True)
-    base = Path(runtime["active_video"]).stem if runtime["active_video"] else "frame"
+    base = runtime["active_video"] or "frame"
     frame_idx = max(int(runtime["frame_idx"]), 0)
-    stamp = int(time.time() * 1000)
-    suffix_part = f"_{suffix}" if suffix else ""
-    filename = f"{base}_frame_{frame_idx:06d}{suffix_part}_{stamp}.jpg"
+    if crop_box is not None and frame_size is not None:
+        # A person/region crop → the shared <video>_<frame>_<yolo coords> name.
+        fw, fh = frame_size
+        filename = cropnames.yolo_crop_name(base, frame_idx, crop_box, fw, fh)
+    else:
+        # A whole-frame capture (Save frame / Save background) — no sub-region to
+        # encode, so keep the timestamped name that lets repeated saves coexist.
+        stem = cropnames.clean_video_name(base)
+        stamp = int(time.time() * 1000)
+        suffix_part = f"_{suffix}" if suffix else ""
+        filename = f"{stem}_frame_{frame_idx:06d}{suffix_part}_{stamp}.jpg"
     save_path = target_dir / filename
     cv2.imwrite(str(save_path), frame)
     return str(save_path)
@@ -1017,7 +1027,7 @@ def save_person_crop(person_index: int) -> str:
     crop = frame[y1:y2, x1:x2]
     if crop.size == 0:
         raise ValueError("Empty crop generated.")
-    return save_frame_image(crop, "person", suffix=f"person_{person_index}")
+    return save_frame_image(crop, "person", crop_box=(x1, y1, x2, y2), frame_size=(w, h))
 
 
 def save_person_crop_from_box(box, suffix: str = "person_manual", subdir: str = "person") -> str:
@@ -1035,7 +1045,7 @@ def save_person_crop_from_box(box, suffix: str = "person_manual", subdir: str = 
     crop = frame[y1:y2, x1:x2]
     if crop.size == 0:
         raise ValueError("Empty crop generated.")
-    return save_frame_image(crop, subdir, suffix=suffix)
+    return save_frame_image(crop, subdir, suffix=suffix, crop_box=(x1, y1, x2, y2), frame_size=(w, h))
 
 
 def add_manual_box_for_current_frame(

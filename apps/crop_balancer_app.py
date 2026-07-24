@@ -35,6 +35,7 @@ from ultralytics import YOLO
 # Repo root on the path so this module can be imported directly as well as via
 # the suite launcher (python3 apps/crop_balancer_app.py still works).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import cropnames
 import paths
 import ports
 import theme as suite_theme
@@ -619,7 +620,8 @@ def process_one_video(video_path, model, total, rows, cols, conf, stride, report
             if crop.size == 0:
                 continue
             r, c = cell
-            fname = f"r{r}_c{c}_f{fidx:06d}_{k}.jpg"
+            # <video>_<frame>_<yolo cx-cy-w-h>.jpg (shared across every tool).
+            fname = cropnames.yolo_crop_name(video_stem, fidx, (x1, y1, x2, y2), fw, fh)
             cv2.imwrite(str(out_dir / fname), crop)
             per_cell_counts[r][c] += 1
             manifest["crops"].append(

@@ -20,6 +20,7 @@ from ultralytics import YOLO
 
 # Repo root on the path so this stays runnable standalone (python3 PPE/ppe_inference.py).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import cropnames
 import paths
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -318,7 +319,8 @@ def run_two_stage_inference(frame, person_model, ppe_model, person_conf, ppe_con
     return annotated, person_count, ppe_count, person_boxes
 
 
-def save_person_crop(frame, frame_idx, person_idx, person_box, output_dir=None):
+def save_person_crop(frame, frame_idx, person_idx, person_box, output_dir=None,
+                     video_name=None):
     if output_dir is None:
         output_dir = PERSON_CROPS_DIR
     h, w = frame.shape[:2]
@@ -335,7 +337,9 @@ def save_person_crop(frame, frame_idx, person_idx, person_box, output_dir=None):
         return None
 
     os.makedirs(output_dir, exist_ok=True)
-    save_name = f"frame_{frame_idx:06d}_person_{person_idx + 1}_{int(time.time() * 1000)}.jpg"
+    # <video>_<frame>_<yolo cx-cy-w-h>.jpg (shared across every tool).
+    save_name = cropnames.yolo_crop_name(video_name or "video", frame_idx,
+                                         (x1p, y1p, x2p, y2p), w, h)
     save_path = os.path.join(output_dir, save_name)
     crop = frame[y1p:y2p, x1p:x2p]
     if crop.size == 0:
@@ -820,7 +824,7 @@ def main():
                 output_dir = PERSON_CROPS_DIR if dest == "person" else BACKGROUND_CROPS_DIR
                 saved_count = 0
                 for manual_idx, manual_box in enumerate(new_boxes):
-                    save_path = save_person_crop(frame, frame_idx, manual_idx, manual_box, output_dir=output_dir)
+                    save_path = save_person_crop(frame, frame_idx, manual_idx, manual_box, output_dir=output_dir, video_name=source)
                     if save_path is None:
                         continue
                     if dest == "person":
@@ -867,7 +871,7 @@ def main():
                 is_manual_selection = True
                 saved_count = 0
                 for manual_idx, manual_box in enumerate(pending_manual_boxes):
-                    save_path = save_person_crop(frame, frame_idx, manual_idx, manual_box)
+                    save_path = save_person_crop(frame, frame_idx, manual_idx, manual_box, video_name=source)
                     if save_path is None:
                         continue
                     x1, y1, x2, y2 = map(int, manual_box[:4])
@@ -890,7 +894,7 @@ def main():
                 selected_box = current_person_boxes[selected_idx]
 
                 if not is_manual_selection:
-                    save_path = save_person_crop(frame, frame_idx, selected_idx, selected_box)
+                    save_path = save_person_crop(frame, frame_idx, selected_idx, selected_box, video_name=source)
                     if save_path is None:
                         print("Could not save person crop for this selection.")
                         continue
@@ -911,7 +915,7 @@ def main():
             if pending_manual_boxes and pending_manual_boxes_frame == frame_idx:
                 saved_count = 0
                 for manual_idx, manual_box in enumerate(pending_manual_boxes):
-                    save_path = save_person_crop(frame, frame_idx, manual_idx, manual_box, output_dir=BACKGROUND_CROPS_DIR)
+                    save_path = save_person_crop(frame, frame_idx, manual_idx, manual_box, output_dir=BACKGROUND_CROPS_DIR, video_name=source)
                     if save_path:
                         saved_count += 1
                         print(f"Saved background crop: {save_path}")
@@ -927,7 +931,7 @@ def main():
                 if selected_idx is None:
                     continue
                 selected_box = current_person_boxes[selected_idx]
-                save_path = save_person_crop(frame, frame_idx, selected_idx, selected_box, output_dir=BACKGROUND_CROPS_DIR)
+                save_path = save_person_crop(frame, frame_idx, selected_idx, selected_box, output_dir=BACKGROUND_CROPS_DIR, video_name=source)
                 if save_path:
                     print(f"Saved background crop: {save_path}")
                 else:
