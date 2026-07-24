@@ -9,6 +9,7 @@ export default defineSchema({
   // stored here (it's configured in .env and always allowed).
   users: defineTable({
     email: v.string(),
+    passwordHash: v.optional(v.string()), // set by the admin; hashed in the backend
     addedBy: v.optional(v.string()),
     addedAt: v.number(),
   }).index("by_email", ["email"]),

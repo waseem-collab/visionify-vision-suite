@@ -48,13 +48,14 @@ __THEME__
   </header>
   <div class="wrap">
     <h1>Manage users</h1>
-    <p class="sub">Add an email to let that person sign in with Google. No invitation is sent — they just sign in and are allowed through. Remove an email to revoke access immediately.</p>
+    <p class="sub">Add a user with an email and a password — they sign in with those. No invitation is sent. Re-adding an existing email just resets their password. Remove a user to revoke access immediately.</p>
 
     __MSG__
 
     <form class="addrow" method="post" action="/admin/users/add">
       <input name="email" type="email" placeholder="person@company.com" autocomplete="off" required />
-      <button type="submit">Add</button>
+      <input name="password" type="password" placeholder="Set a password" autocomplete="new-password" required />
+      <button type="submit">Save</button>
     </form>
 
     <table>

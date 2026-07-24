@@ -2,16 +2,18 @@
 """
 Login + access control for the Vision Suite.
 
-One admin (email + password, from .env) plus a local allowlist of emails who may
-sign in with Google. Everything else is denied. A signed cookie carries the
-session across the shell and all three mounted tools (they share the same
-AUTH_SECRET, so any of them can verify it).
+Everyone signs in with an email and password. One admin comes from .env; the
+admin adds other users on the /admin page, setting each person's password at that
+time. Passwords are hashed in this backend (werkzeug) — the plaintext never
+reaches Convex, only the hash is stored. A signed cookie carries the session
+across the shell and all three mounted tools (they share the same AUTH_SECRET,
+so any of them can verify it).
 
 Design notes:
-- The allowlist lives in a local JSON file, NOT Convex, so login keeps working
-  even if Convex is down or unconfigured.
-- The allowlist is re-checked on every request, so removing someone takes effect
-  immediately (their existing session stops working), not just at next login.
+- The allowlist + password hashes live in Convex, cached briefly here and
+  re-checked per request, so removing someone takes effect immediately.
+- The admin is configured in .env and always allowed, so a Convex blip can't
+  lock the admin out.
 - Cookies are HttpOnly + SameSite=Lax. There's no Secure flag because the suite
   runs over plain HTTP on a LAN — fine for that, but don't expose it to the
   public internet without TLS in front.
@@ -19,16 +21,14 @@ Design notes:
 import os
 import threading
 import time
-from urllib.parse import urlencode
 
 from flask import redirect, request
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 import convex_client
 
 COOKIE = "vs_auth"
-STATE_COOKIE = "vs_oauth_state"
 MAX_AGE = 7 * 24 * 3600  # a week
 _lock = threading.Lock()
 
@@ -48,23 +48,6 @@ def _serializer(salt):
 
 def admin_email():
     return _env("AUTH_ADMIN_EMAIL").lower()
-
-
-def google_client_id():
-    return _env("GOOGLE_CLIENT_ID")
-
-
-def google_client_secret():
-    return _env("GOOGLE_CLIENT_SECRET")
-
-
-def google_configured():
-    return bool(google_client_id() and google_client_secret())
-
-
-def redirect_uri():
-    base = _env("AUTH_REDIRECT_BASE") or "http://localhost:8000"
-    return base.rstrip("/") + "/auth/google/callback"
 
 
 # --------------------------------------------------------------------------- #
@@ -112,15 +95,21 @@ def list_users():
     return sorted(_allowed_emails(force=True))
 
 
-def add_user(email, by=None):
+def add_user(email, password, by=None):
+    """Add (or update) a user with a password. Re-adding an existing email just
+    updates their password. The password is hashed here; only the hash is stored."""
     email = (email or "").strip().lower()
-    if not email or "@" not in email:
+    if not email or "@" not in email or not (password or "").strip():
         return False
     client = convex_client.get_client()
     if client is None:
         return False
     client.mutation("users:add", {
-        "secret": convex_client.shared_secret(), "email": email, "addedBy": (by or "")})
+        "secret": convex_client.shared_secret(),
+        "email": email,
+        "passwordHash": generate_password_hash(password),
+        "addedBy": (by or ""),
+    })
     _invalidate()
     return True
 
@@ -181,76 +170,30 @@ def clear_session(resp):
 
 
 # --------------------------------------------------------------------------- #
-# Password login (admin only)
+# Password login (admin from .env; everyone else from Convex)
 # --------------------------------------------------------------------------- #
-def check_admin_password(email, password):
-    if (email or "").strip().lower() != admin_email():
-        return False
-    hashed = _env("AUTH_ADMIN_PASSWORD_HASH")
-    return bool(hashed) and check_password_hash(hashed, password or "")
-
-
-# --------------------------------------------------------------------------- #
-# Google OAuth (authorization-code flow, verified via tokeninfo — no extra deps)
-# --------------------------------------------------------------------------- #
-def google_auth_url(state):
-    params = {
-        "client_id": google_client_id(),
-        "redirect_uri": redirect_uri(),
-        "response_type": "code",
-        "scope": "openid email profile",
-        "state": state,
-        "access_type": "online",
-        "prompt": "select_account",
-    }
-    return "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params)
-
-
-def make_state():
-    return _serializer("vs-oauth").dumps({"n": os.urandom(8).hex()})
-
-
-def valid_state(state):
-    if not state:
-        return False
+def _user_hash(email):
+    """The stored password hash for a non-admin user, or None."""
+    client = convex_client.get_client()
+    if client is None:
+        return None
     try:
-        _serializer("vs-oauth").loads(state, max_age=600)  # 10 min
-        return True
-    except (BadSignature, SignatureExpired, Exception):
+        rec = client.query("users:get", {"secret": convex_client.shared_secret(), "email": email})
+    except Exception:
+        return None
+    return (rec or {}).get("passwordHash")
+
+
+def check_password(email, password):
+    """True if this email + password is a valid login (admin or an added user)."""
+    email = (email or "").strip().lower()
+    if not email or not (password or ""):
         return False
-
-
-def google_email_from_code(code):
-    """Exchange the auth code and return the verified email (or raise)."""
-    import requests
-    tok = requests.post(
-        "https://oauth2.googleapis.com/token",
-        data={
-            "code": code,
-            "client_id": google_client_id(),
-            "client_secret": google_client_secret(),
-            "redirect_uri": redirect_uri(),
-            "grant_type": "authorization_code",
-        },
-        timeout=15,
-    )
-    tok.raise_for_status()
-    id_token = tok.json().get("id_token")
-    if not id_token:
-        raise ValueError("no id_token in Google response")
-    info = requests.get(
-        "https://oauth2.googleapis.com/tokeninfo", params={"id_token": id_token}, timeout=15
-    )
-    info.raise_for_status()
-    claims = info.json()
-    if claims.get("aud") != google_client_id():
-        raise ValueError("token audience mismatch")
-    if str(claims.get("email_verified")).lower() != "true":
-        raise ValueError("Google account email is not verified")
-    email = (claims.get("email") or "").lower()
-    if not email:
-        raise ValueError("no email in Google token")
-    return email
+    if email == admin_email():
+        hashed = _env("AUTH_ADMIN_PASSWORD_HASH")
+        return bool(hashed) and check_password_hash(hashed, password)
+    hashed = _user_hash(email)
+    return bool(hashed) and check_password_hash(hashed, password)
 
 
 # --------------------------------------------------------------------------- #
@@ -259,13 +202,13 @@ def google_email_from_code(code):
 def gate():
     """Return a response to block the request, or None to let it through.
 
-    Public paths (login, the OAuth dance, logout, live-reload) are always
-    allowed; everything else needs a valid, still-allowed session.
+    Public paths (login, logout, live-reload) are always allowed; everything else
+    needs a valid, still-allowed session.
     """
     if request.method == "OPTIONS":
         return None  # let CORS preflight through
     p = request.path or "/"
-    if p == "/login" or p == "/logout" or p.startswith("/auth/") or p == "/__livereload__":
+    if p == "/login" or p == "/logout" or p == "/__livereload__":
         return None
     if current_email():
         return None

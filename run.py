@@ -327,67 +327,28 @@ def _render_template(name, **subs):
 
 def _login_page(error=""):
     err_html = f'<div class="err">{error}</div>' if error else ""
-    if auth.google_configured():
-        google = ('<a class="google" href="/auth/google">'
-                  '<svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.6 30.1 0 24 0 14.6 0 6.4 5.4 2.5 13.3l7.8 6C12.2 13.2 17.6 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.6c0-1.6-.1-3.1-.4-4.6H24v9h12.4c-.5 2.9-2.1 5.3-4.6 7l7.1 5.5c4.2-3.9 6.6-9.6 6.6-16.9z"/><path fill="#FBBC05" d="M10.3 28.7c-.5-1.4-.7-2.9-.7-4.7s.3-3.3.7-4.7l-7.8-6C.9 16.4 0 20.1 0 24s.9 7.6 2.5 10.7l7.8-6z"/><path fill="#34A853" d="M24 48c6.1 0 11.3-2 15-5.5l-7.1-5.5c-2 1.4-4.6 2.2-7.9 2.2-6.4 0-11.8-3.7-13.7-9.2l-7.8 6C6.4 42.6 14.6 48 24 48z"/></svg>'
-                  'Sign in with Google</a>')
-    else:
-        google = ('<div class="google off" title="Not configured">'
-                  'Google sign-in not configured</div>'
-                  '<div class="note">Set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET in .env to enable it.</div>')
-    return _render_template("login.html", __ERROR__=err_html, __GOOGLE__=google)
+    return _render_template("login.html", __ERROR__=err_html)
 
 
 @shell.get("/login")
 def login_get():
     if auth.current_email():
         return redirect("/")
-    err = {"denied": "That account isn't allowed. Ask the admin to add your email.",
-           "google": "Google sign-in failed. Please try again."}.get(request.args.get("error", ""), "")
-    return Response(_login_page(err), mimetype="text/html")
+    return Response(_login_page(), mimetype="text/html")
 
 
 @shell.post("/login")
 def login_post():
     email = request.form.get("email", "")
     password = request.form.get("password", "")
-    if auth.check_admin_password(email, password):
-        resp = redirect("/")
-        return auth.set_session(resp, email.strip().lower())
+    if auth.check_password(email, password):
+        return auth.set_session(redirect("/"), email.strip().lower())
     return Response(_login_page("Wrong email or password."), mimetype="text/html", status=401)
 
 
 @shell.get("/logout")
 def logout():
     return auth.clear_session(redirect("/login"))
-
-
-@shell.get("/auth/google")
-def auth_google():
-    if not auth.google_configured():
-        return redirect("/login")
-    state = auth.make_state()
-    resp = redirect(auth.google_auth_url(state))
-    resp.set_cookie(auth.STATE_COOKIE, state, max_age=600, httponly=True, samesite="Lax", path="/")
-    return resp
-
-
-@shell.get("/auth/google/callback")
-def auth_google_callback():
-    if request.args.get("error") or not request.args.get("code"):
-        return redirect("/login?error=google")
-    state = request.args.get("state", "")
-    if state != request.cookies.get(auth.STATE_COOKIE) or not auth.valid_state(state):
-        return redirect("/login?error=google")
-    try:
-        email = auth.google_email_from_code(request.args["code"])
-    except Exception:
-        return redirect("/login?error=google")
-    if not auth.is_allowed(email):
-        return redirect("/login?error=denied")
-    resp = redirect("/")
-    resp.delete_cookie(auth.STATE_COOKIE, path="/")
-    return auth.set_session(resp, email)
 
 
 def _require_admin():
@@ -399,9 +360,9 @@ def _require_admin():
 def admin_get():
     if not _require_admin():
         return redirect("/")
-    msg = {"added": ('<div class="msg ok">Email added.</div>'),
-           "removed": ('<div class="msg ok">Email removed.</div>'),
-           "bad": ('<div class="msg err">That doesn\'t look like a valid email.</div>'),
+    msg = {"added": ('<div class="msg ok">User saved. They can sign in with that email and password.</div>'),
+           "removed": ('<div class="msg ok">User removed.</div>'),
+           "bad": ('<div class="msg err">Enter a valid email and a password.</div>'),
            "err": ('<div class="msg err">Couldn\'t reach the database. Try again.</div>'),
            }.get(request.args.get("m", ""), "")
     try:
@@ -428,8 +389,9 @@ def admin_add():
     if not _require_admin():
         return redirect("/")
     email = request.form.get("email", "")
+    password = request.form.get("password", "")
     try:
-        ok = auth.add_user(email, by=auth.current_email())
+        ok = auth.add_user(email, password, by=auth.current_email())
     except Exception:
         return redirect("/admin?m=err")
     return redirect("/admin?m=" + ("added" if ok else "bad"))

@@ -15,17 +15,40 @@ export const list = query({
   },
 });
 
+// The password hash for one email — used by the backend to check a login.
+export const get = query({
+  args: { secret: v.string(), email: v.string() },
+  handler: async (ctx, { secret, email }) => {
+    assertSecret(secret);
+    const rec = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", email.trim().toLowerCase()))
+      .unique();
+    return rec ? { email: rec.email, passwordHash: rec.passwordHash || "" } : null;
+  },
+});
+
 export const add = mutation({
-  args: { secret: v.string(), email: v.string(), addedBy: v.optional(v.string()) },
-  handler: async (ctx, { secret, email, addedBy }) => {
+  args: {
+    secret: v.string(),
+    email: v.string(),
+    passwordHash: v.string(),
+    addedBy: v.optional(v.string()),
+  },
+  handler: async (ctx, { secret, email, passwordHash, addedBy }) => {
     assertSecret(secret);
     const e = email.trim().toLowerCase();
     const existing = await ctx.db
       .query("users")
       .withIndex("by_email", (q) => q.eq("email", e))
       .unique();
-    if (existing) return existing._id; // already allowed — no-op
-    return await ctx.db.insert("users", { email: e, addedBy: addedBy || "", addedAt: Date.now() });
+    if (existing) {
+      await ctx.db.patch(existing._id, { passwordHash }); // re-add = reset password
+      return existing._id;
+    }
+    return await ctx.db.insert("users", {
+      email: e, passwordHash, addedBy: addedBy || "", addedAt: Date.now(),
+    });
   },
 });
 
