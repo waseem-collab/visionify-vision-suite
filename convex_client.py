@@ -27,18 +27,24 @@ from urllib.parse import urlparse
 _ROOT = Path(__file__).resolve().parent
 _client = None
 _lock = threading.Lock()
+_env_mtime = None
 
 
 def _load_env():
-    """Populate CONVEX_URL from the repo-root .env if the app hasn't already.
+    """Load Convex settings from the repo-root .env into os.environ.
 
-    The running apps load .env themselves, but this keeps the module usable on
-    its own (e.g. a quick connectivity check from a REPL).
+    Re-reads whenever .env's mtime changes, so a value added after the app
+    started (e.g. CONVEX_SHARED_SECRET set once the deployment is live) is picked
+    up on the next call — no full restart needed. Uses setdefault, so a real
+    environment variable always wins over the file.
     """
-    if os.environ.get("CONVEX_URL"):
-        return
+    global _env_mtime
     env = _ROOT / ".env"
-    if not env.exists():
+    try:
+        mtime = env.stat().st_mtime
+    except OSError:
+        return
+    if _env_mtime == mtime:
         return
     try:
         for line in env.read_text(encoding="utf-8").splitlines():
@@ -47,6 +53,7 @@ def _load_env():
                 continue
             key, val = line.split("=", 1)
             os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
+        _env_mtime = mtime
     except OSError:
         pass
 
