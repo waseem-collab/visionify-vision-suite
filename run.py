@@ -24,6 +24,7 @@ Run:  python3 run.py        (or: npm run dev)
 """
 import atexit
 import fcntl
+import html
 import os
 import sys
 import threading
@@ -34,6 +35,7 @@ from flask import Flask, Response, redirect, request
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
 from werkzeug.serving import run_simple
 
+import auth
 import convex_client
 import paths
 import ports
@@ -144,8 +146,14 @@ shell = Flask("vision_suite")
 
 
 def _render_landing():
+    email = auth.current_email() or ""
+    admin_link = ('<a class="admin" href="/admin">Manage users</a>'
+                  if auth.is_admin(email) else "")
+    user_menu = (f'<span class="usermenu"><span class="who">{html.escape(email)}</span>'
+                 f'{admin_link}<a href="/logout">Log out</a></span>') if email else ""
     page = LANDING_TEMPLATE.read_text(encoding="utf-8")
     return (page
+            .replace("__USER_MENU__", user_menu)
             .replace("__THEME__", theme.stylesheet())
             .replace("__THEME_SCRIPT__", theme.THEME_SCRIPT)
             .replace("__THEME_JS__", theme.THEME_JS)
@@ -302,6 +310,142 @@ def heatmap_page():
     return resp
 
 
+# --------------------------------------------------------------------------- #
+# Auth: login (password or Google), logout, and the admin allowlist page.
+# --------------------------------------------------------------------------- #
+def _render_template(name, **subs):
+    page = (paths.ROOT / "templates" / name).read_text(encoding="utf-8")
+    page = (page
+            .replace("__THEME__", theme.stylesheet())
+            .replace("__THEME_SCRIPT__", theme.THEME_SCRIPT)
+            .replace("__THEME_JS__", theme.THEME_JS)
+            .replace("__THEME_BUTTON__", theme.THEME_BUTTON))
+    for k, v in subs.items():
+        page = page.replace(k, v)
+    return page
+
+
+def _login_page(error=""):
+    err_html = f'<div class="err">{error}</div>' if error else ""
+    if auth.google_configured():
+        google = ('<a class="google" href="/auth/google">'
+                  '<svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.6 30.1 0 24 0 14.6 0 6.4 5.4 2.5 13.3l7.8 6C12.2 13.2 17.6 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.6c0-1.6-.1-3.1-.4-4.6H24v9h12.4c-.5 2.9-2.1 5.3-4.6 7l7.1 5.5c4.2-3.9 6.6-9.6 6.6-16.9z"/><path fill="#FBBC05" d="M10.3 28.7c-.5-1.4-.7-2.9-.7-4.7s.3-3.3.7-4.7l-7.8-6C.9 16.4 0 20.1 0 24s.9 7.6 2.5 10.7l7.8-6z"/><path fill="#34A853" d="M24 48c6.1 0 11.3-2 15-5.5l-7.1-5.5c-2 1.4-4.6 2.2-7.9 2.2-6.4 0-11.8-3.7-13.7-9.2l-7.8 6C6.4 42.6 14.6 48 24 48z"/></svg>'
+                  'Sign in with Google</a>')
+    else:
+        google = ('<div class="google off" title="Not configured">'
+                  'Google sign-in not configured</div>'
+                  '<div class="note">Set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET in .env to enable it.</div>')
+    return _render_template("login.html", __ERROR__=err_html, __GOOGLE__=google)
+
+
+@shell.get("/login")
+def login_get():
+    if auth.current_email():
+        return redirect("/")
+    err = {"denied": "That account isn't allowed. Ask the admin to add your email.",
+           "google": "Google sign-in failed. Please try again."}.get(request.args.get("error", ""), "")
+    return Response(_login_page(err), mimetype="text/html")
+
+
+@shell.post("/login")
+def login_post():
+    email = request.form.get("email", "")
+    password = request.form.get("password", "")
+    if auth.check_admin_password(email, password):
+        resp = redirect("/")
+        return auth.set_session(resp, email.strip().lower())
+    return Response(_login_page("Wrong email or password."), mimetype="text/html", status=401)
+
+
+@shell.get("/logout")
+def logout():
+    return auth.clear_session(redirect("/login"))
+
+
+@shell.get("/auth/google")
+def auth_google():
+    if not auth.google_configured():
+        return redirect("/login")
+    state = auth.make_state()
+    resp = redirect(auth.google_auth_url(state))
+    resp.set_cookie(auth.STATE_COOKIE, state, max_age=600, httponly=True, samesite="Lax", path="/")
+    return resp
+
+
+@shell.get("/auth/google/callback")
+def auth_google_callback():
+    if request.args.get("error") or not request.args.get("code"):
+        return redirect("/login?error=google")
+    state = request.args.get("state", "")
+    if state != request.cookies.get(auth.STATE_COOKIE) or not auth.valid_state(state):
+        return redirect("/login?error=google")
+    try:
+        email = auth.google_email_from_code(request.args["code"])
+    except Exception:
+        return redirect("/login?error=google")
+    if not auth.is_allowed(email):
+        return redirect("/login?error=denied")
+    resp = redirect("/")
+    resp.delete_cookie(auth.STATE_COOKIE, path="/")
+    return auth.set_session(resp, email)
+
+
+def _require_admin():
+    email = auth.current_email()
+    return email if auth.is_admin(email) else None
+
+
+@shell.get("/admin")
+def admin_get():
+    if not _require_admin():
+        return redirect("/")
+    msg = {"added": ('<div class="msg ok">Email added.</div>'),
+           "removed": ('<div class="msg ok">Email removed.</div>'),
+           "bad": ('<div class="msg err">That doesn\'t look like a valid email.</div>'),
+           "err": ('<div class="msg err">Couldn\'t reach the database. Try again.</div>'),
+           }.get(request.args.get("m", ""), "")
+    try:
+        users = auth.list_users()
+    except Exception:
+        users = []
+    admin = html.escape(auth.admin_email())
+    rows = [f'<tr><td>{admin}<span class="tag">admin</span></td><td class="act"></td></tr>']
+    for e in users:
+        esc = html.escape(e)
+        rows.append(
+            f'<tr><td>{esc}</td><td class="act">'
+            f'<form class="inline" method="post" action="/admin/users/remove">'
+            f'<input type="hidden" name="email" value="{esc}">'
+            f'<button class="rm" type="submit">Remove</button></form></td></tr>')
+    if not users:
+        rows.append('<tr><td colspan="2"><div class="empty">No other users yet. Add an email above.</div></td></tr>')
+    return Response(_render_template("admin.html", __MSG__=msg, __ROWS__="".join(rows)),
+                    mimetype="text/html")
+
+
+@shell.post("/admin/users/add")
+def admin_add():
+    if not _require_admin():
+        return redirect("/")
+    email = request.form.get("email", "")
+    try:
+        ok = auth.add_user(email, by=auth.current_email())
+    except Exception:
+        return redirect("/admin?m=err")
+    return redirect("/admin?m=" + ("added" if ok else "bad"))
+
+
+@shell.post("/admin/users/remove")
+def admin_remove():
+    if not _require_admin():
+        return redirect("/")
+    try:
+        auth.remove_user(request.form.get("email", ""))
+    except Exception:
+        return redirect("/admin?m=err")
+    return redirect("/admin?m=removed")
+
+
 @shell.get("/__livereload__")
 def livereload_token():
     return START_TOKEN, 200, {"Content-Type": "text/plain"}
@@ -316,6 +460,10 @@ def _shell_livereload(resp):
 
 def build_application():
     _register_hooks()
+    # Gate every app: the shell and all three tools require a valid session. They
+    # share the AUTH_SECRET, so each verifies the same cookie independently.
+    for app in (shell, annotation_app.app, web_app.app, crop_balancer_app.app):
+        app.before_request(auth.gate)
     return DispatcherMiddleware(shell, {
         "/annotate": annotation_app.app,
         "/webapp": web_app.app,
@@ -417,9 +565,9 @@ if __name__ == "__main__":
         print(f"    Crop Tools          {url}/crop/\n")
         if convex_client.is_configured():
             ok, detail = convex_client.ping()
-            auth = "auth token set" if convex_client.auth_token() else "no auth token"
+            token_note = "auth token set" if convex_client.auth_token() else "no auth token"
             print(f"  Convex: {convex_client.convex_url()} "
-                  f"({'reachable' if ok else 'UNREACHABLE — ' + detail}, {auth})\n")
+                  f"({'reachable' if ok else 'UNREACHABLE — ' + detail}, {token_note})\n")
         else:
             print("  Convex: not configured (set CONVEX_URL in .env)\n")
         _open_browser_when_ready(url)
