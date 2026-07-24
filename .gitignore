@@ -71,3 +71,7 @@ web_app_settings.json
 crop_balancer_settings.json
 disagreement_settings.json
 review_settings.json
+
+# Seed data for the camera registry (customer/company names) — kept local;
+# the registry itself lives in Convex. Re-seed with cameras:seed from this file.
+cams-data.csv

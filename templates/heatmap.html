@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Heatmap · Vision Suite</title>
+__THEME_SCRIPT__
+<style>
+__THEME__
+  html,body{margin:0;min-height:100%;}
+  body{display:flex;flex-direction:column;}
+  .topbar{display:flex;align-items:center;gap:14px;padding:16px 22px;border-bottom:1px solid var(--border);}
+  .brand{display:flex;align-items:center;gap:9px;font-weight:800;letter-spacing:2px;font-size:13px;color:var(--text);}
+  .brand .dot{width:9px;height:9px;border-radius:50%;background:var(--accent);}
+  .spacer{flex:1;}
+  .wrap{max-width:1200px;width:100%;margin:0 auto;padding:24px 22px 48px;}
+  h1{font-size:22px;margin:0 0 4px;font-weight:650;display:flex;align-items:center;gap:11px;}
+  h1::before{content:"";width:4px;height:20px;border-radius:2px;background:var(--accent);}
+  .sub{color:var(--text-muted);margin:0 0 22px;font-size:13.5px;}
+
+  /* Filters — one row above the chart (dataviz: filters in one row). */
+  .filters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:8px;}
+  .field{display:flex;flex-direction:column;gap:5px;min-width:0;}
+  .field label{font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--text-muted);font-weight:600;}
+  .field select{width:100%;height:38px;padding:8px 30px 8px 11px;font-size:13px;color:var(--text);
+    background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);cursor:pointer;
+    appearance:none;-webkit-appearance:none;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5' fill='none' stroke='%238a8a8a' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat:no-repeat;background-position:right 11px center;transition:border-color .14s,box-shadow .14s;}
+  .field select:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring);}
+  .field select:disabled{opacity:.5;cursor:not-allowed;}
+  .field select option{background:var(--surface-2);color:var(--text);}
+  .toolbar{display:flex;align-items:center;gap:14px;margin:14px 0 16px;flex-wrap:wrap;}
+  .count{font-family:var(--mono);font-size:13px;color:var(--text);background:var(--surface-2);
+    border:1px solid var(--border);border-radius:999px;padding:5px 13px;}
+  .count b{color:var(--accent);}
+  .reset{font-size:12.5px;color:var(--text-muted);background:none;border:1px solid var(--border-2);
+    border-radius:var(--r);padding:7px 12px;cursor:pointer;transition:border-color .14s,color .14s;}
+  .reset:hover{color:var(--text);border-color:var(--accent);}
+  .resbox{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-muted);}
+  .resbox input{width:120px;accent-color:var(--accent);}
+
+  /* Plot: a fixed dark stage so the sequential ramp reads the same in light &
+     dark themes (like the suite's image stages). 16:9 to feel like a frame. */
+  .stage-wrap{display:flex;gap:18px;align-items:stretch;flex-wrap:wrap;}
+  .stage{position:relative;flex:1 1 640px;min-width:0;aspect-ratio:16/9;border-radius:var(--r-lg);
+    overflow:hidden;background:#0d1117;border:1px solid var(--border-2);box-shadow:var(--sh-md);}
+  #hm{position:absolute;inset:0;width:100%;height:100%;display:block;image-rendering:auto;}
+  .empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;
+    color:#8b93a5;font-size:14px;padding:24px;line-height:1.6;}
+  .tip{position:fixed;z-index:50;pointer-events:none;background:var(--surface);border:1px solid var(--border-2);
+    border-radius:var(--r);padding:6px 9px;font-size:12px;font-family:var(--mono);color:var(--text);
+    box-shadow:var(--sh-md);opacity:0;transition:opacity .1s;white-space:nowrap;}
+
+  /* Colorbar legend (sequential scale). */
+  .legend{flex:0 0 auto;display:flex;flex-direction:column;justify-content:flex-end;padding:6px 0;}
+  .legend .cap{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--text-muted);margin-bottom:8px;}
+  .bar{width:16px;flex:1;min-height:180px;border-radius:5px;border:1px solid var(--border);}
+  .ticks{display:flex;flex-direction:column;justify-content:space-between;font-family:var(--mono);
+    font-size:11px;color:var(--text-muted);margin-left:7px;}
+  .legend-row{display:flex;align-items:stretch;gap:0;height:100%;}
+  @media (max-width:720px){ .filters{grid-template-columns:1fr 1fr;} }
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="dot"></span>VISION SUITE</div>
+    <div class="spacer"></div>
+    <a class="home-btn" href="/home" title="Back to the suite"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5"/><path d="M9.5 21v-6h5v6"/></svg>Suite</a>
+    __THEME_BUTTON__
+  </header>
+
+  <div class="wrap">
+    <h1>Detection Heatmap</h1>
+    <p class="sub">Where people appear across a camera's frames. Pick a company, site and camera — and optionally a class — to filter.</p>
+
+    <div class="filters">
+      <div class="field"><label for="f_company">Company</label><select id="f_company"></select></div>
+      <div class="field"><label for="f_site">Site</label><select id="f_site" disabled></select></div>
+      <div class="field"><label for="f_camera">Camera</label><select id="f_camera" disabled></select></div>
+      <div class="field"><label for="f_class">Class</label><select id="f_class"></select></div>
+    </div>
+
+    <div class="toolbar">
+      <span class="count" id="count">— crops</span>
+      <button class="reset" id="reset">Reset filters</button>
+      <span class="resbox">Resolution <input type="range" id="res" min="16" max="72" step="4" value="40"><span id="resval" class="mono">40</span></span>
+    </div>
+
+    <div class="stage-wrap">
+      <div class="stage">
+        <canvas id="hm"></canvas>
+        <div class="empty" id="empty">Loading…</div>
+      </div>
+      <div class="legend">
+        <div class="cap">Density</div>
+        <div class="legend-row">
+          <div class="bar" id="legendbar"></div>
+          <div class="ticks"><span id="tickmax">–</span><span>·</span><span>0</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tip" id="tip"></div>
+
+<script>
+__THEME_JS__
+
+// ---- Sequential single-hue ramp (blue), light→bright over the dark stage.
+// Magnitude = crop count per cell. Stops chosen for monotonic lightness so it
+// reads as one ordered scale (not a rainbow).
+const RAMP = [
+  [13, 17, 23],      // 0 — the stage (empty cell)
+  [30, 58, 95],      // deep blue
+  [37, 99, 235],     // accent blue
+  [110, 168, 254],   // light blue
+  [169, 204, 255],   // bright
+  [224, 238, 255],   // peak
+];
+function rampColor(t){                       // t in [0,1]
+  t = Math.max(0, Math.min(1, t));
+  const x = t * (RAMP.length - 1);
+  const i = Math.floor(x), f = x - i;
+  const a = RAMP[i], b = RAMP[Math.min(i + 1, RAMP.length - 1)];
+  return [Math.round(a[0]+(b[0]-a[0])*f), Math.round(a[1]+(b[1]-a[1])*f), Math.round(a[2]+(b[2]-a[2])*f)];
+}
+// A perceptual boost: sqrt so sparse cells are still visible against dense ones.
+function ramp(count, max){ return rampColor(max > 0 ? Math.sqrt(count / max) : 0); }
+
+// paint the legend colorbar
+(function(){
+  const stops = [];
+  for (let i = 0; i <= 10; i++){ const c = rampColor(Math.sqrt(i/10)); stops.push(`rgb(${c[0]},${c[1]},${c[2]}) ${i*10}%`); }
+  document.getElementById('legendbar').style.background = `linear-gradient(to top, ${stops.join(',')})`;
+})();
+
+const $ = (id) => document.getElementById(id);
+let CAMERAS = [];          // [{company, site, camera}]
+let current = null;        // last grid payload
+
+function opt(value, label){ const o = document.createElement('option'); o.value = value; o.textContent = label; return o; }
+
+function fillCompanies(){
+  const sel = $('f_company'); sel.innerHTML = '';
+  sel.appendChild(opt('', 'All companies'));
+  [...new Set(CAMERAS.map(c => c.company))].sort().forEach(c => sel.appendChild(opt(c, c)));
+}
+function fillSites(){
+  const company = $('f_company').value;
+  const sel = $('f_site'); sel.innerHTML = ''; sel.appendChild(opt('', 'All sites'));
+  const sites = [...new Set(CAMERAS.filter(c => !company || c.company === company).map(c => c.site))].sort();
+  sites.forEach(s => sel.appendChild(opt(s, s)));
+  sel.disabled = !company;
+}
+function fillCameras(){
+  const company = $('f_company').value, site = $('f_site').value;
+  const sel = $('f_camera'); sel.innerHTML = ''; sel.appendChild(opt('', 'All cameras'));
+  const cams = CAMERAS.filter(c => (!company || c.company === company) && (!site || c.site === site))
+                      .map(c => c.camera).sort();
+  cams.forEach(c => sel.appendChild(opt(c, c)));
+  sel.disabled = !company;
+}
+
+async function loadMeta(){
+  try {
+    const [cam, cls] = await Promise.all([
+      fetch('/api/heatmap/cameras').then(r => r.json()),
+      fetch('/api/heatmap/classes').then(r => r.json()),
+    ]);
+    CAMERAS = cam.cameras || [];
+    fillCompanies(); fillSites(); fillCameras();
+    const csel = $('f_class'); csel.innerHTML = ''; csel.appendChild(opt('', 'All classes'));
+    (cls.classes || []).forEach(c => csel.appendChild(opt(c, c)));
+  } catch(e){ /* offline — leave filters empty */ }
+}
+
+function currentFilters(){
+  const p = new URLSearchParams();
+  const map = { f_company: 'company', f_site: 'site', f_camera: 'camera', f_class: 'className' };
+  for (const [id, key] of Object.entries(map)){ const v = $(id).value; if (v) p.set(key, v); }
+  p.set('cols', $('res').value);
+  return p;
+}
+
+async function draw(){
+  $('empty').textContent = 'Loading…'; $('empty').style.display = 'flex';
+  let data;
+  try { data = await fetch('/api/heatmap/data?' + currentFilters().toString()).then(r => r.json()); }
+  catch(e){ $('empty').textContent = 'Could not reach the server.'; return; }
+  current = data;
+  $('count').innerHTML = '<b>' + (data.count || 0).toLocaleString() + '</b> crops';
+  $('tickmax').textContent = data.max || 0;
+
+  const canvas = $('hm'), ctx = canvas.getContext('2d');
+  const cols = data.cols, rows = data.rows;
+  // Render at grid resolution; CSS scales it up crisply.
+  canvas.width = cols; canvas.height = rows;
+  ctx.clearRect(0, 0, cols, rows);
+  if (!data.count){
+    $('empty').innerHTML = 'No crops match these filters yet.<br>Run inference on a camera video to populate the map.';
+    $('empty').style.display = 'flex';
+    ctx.fillStyle = 'rgb(13,17,23)'; ctx.fillRect(0,0,cols,rows);
+    return;
+  }
+  $('empty').style.display = 'none';
+  for (let y = 0; y < rows; y++){
+    for (let x = 0; x < cols; x++){
+      const c = ramp(data.cells[y][x], data.max);
+      ctx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+      ctx.fillRect(x, y, 1, 1);
+    }
+  }
+}
+
+// hover tooltip: which cell + its count
+const tip = $('tip'), canvas = $('hm');
+canvas.addEventListener('mousemove', (e) => {
+  if (!current || !current.count){ tip.style.opacity = 0; return; }
+  const r = canvas.getBoundingClientRect();
+  const cx = Math.floor((e.clientX - r.left) / r.width * current.cols);
+  const cy = Math.floor((e.clientY - r.top) / r.height * current.rows);
+  if (cx < 0 || cy < 0 || cx >= current.cols || cy >= current.rows){ tip.style.opacity = 0; return; }
+  const n = current.cells[cy][cx];
+  tip.textContent = n + (n === 1 ? ' crop' : ' crops');
+  tip.style.left = (e.clientX + 12) + 'px'; tip.style.top = (e.clientY + 12) + 'px';
+  tip.style.opacity = n ? 1 : .5;
+});
+canvas.addEventListener('mouseleave', () => { tip.style.opacity = 0; });
+
+// wire filters
+$('f_company').addEventListener('change', () => { fillSites(); fillCameras(); draw(); });
+$('f_site').addEventListener('change', () => { fillCameras(); draw(); });
+$('f_camera').addEventListener('change', draw);
+$('f_class').addEventListener('change', draw);
+$('res').addEventListener('input', () => { $('resval').textContent = $('res').value; });
+$('res').addEventListener('change', draw);
+$('reset').addEventListener('click', () => {
+  $('f_company').value = ''; fillSites(); fillCameras(); $('f_class').value = ''; draw();
+});
+
+(async () => { await loadMeta(); await draw(); })();
+</script>
+</body>
+</html>

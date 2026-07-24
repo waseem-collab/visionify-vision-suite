@@ -16,6 +16,9 @@ export const record = mutation({
     h: v.number(),
     source: v.string(),
     conf: v.optional(v.number()),
+    company: v.optional(v.string()),
+    site: v.optional(v.string()),
+    camera: v.optional(v.string()),
     savedAt: v.number(),
   },
   handler: async (ctx, args) => {
@@ -30,6 +33,41 @@ export const record = mutation({
       return existing._id;
     }
     return await ctx.db.insert("crops", doc);
+  },
+});
+
+// Heatmap points for the given filters: every matching crop's (cx, cy).
+// company/site/camera narrow by the crop's camera tag; className keeps only
+// crops whose saved annotation includes that class. Empty filters = everything.
+export const heatmap = query({
+  args: {
+    company: v.optional(v.string()),
+    site: v.optional(v.string()),
+    camera: v.optional(v.string()),
+    className: v.optional(v.string()),
+  },
+  handler: async (ctx, { company, site, camera, className }) => {
+    let rows = camera
+      ? await ctx.db
+          .query("crops")
+          .withIndex("by_camera", (q) => q.eq("camera", camera))
+          .collect()
+      : await ctx.db.query("crops").collect();
+    if (company) rows = rows.filter((r) => r.company === company);
+    if (site) rows = rows.filter((r) => r.site === site);
+    if (className) {
+      const anns = await ctx.db.query("annotations").collect();
+      const withClass = new Set(
+        anns
+          .filter((a) => a.boxes.some((b) => b.className === className))
+          .map((a) => a.crop || a.image)
+      );
+      rows = rows.filter((r) => withClass.has(r.filename));
+    }
+    return {
+      count: rows.length,
+      points: rows.map((r) => ({ cx: r.cx, cy: r.cy })),
+    };
   },
 });
 

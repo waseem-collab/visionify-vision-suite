@@ -40,6 +40,20 @@ export const record = mutation({
   },
 });
 
+// The distinct class labels seen across all annotations — populates the
+// heatmap's class filter.
+export const classes = query({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("annotations").collect();
+    const names = new Set<string>();
+    for (const a of rows) {
+      for (const b of a.boxes) if (b.className) names.add(b.className);
+    }
+    return Array.from(names).sort();
+  },
+});
+
 // Recent annotations (most recent first) — for a quick sanity view.
 export const recent = query({
   args: { limit: v.optional(v.number()) },

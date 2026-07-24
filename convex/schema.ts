@@ -5,6 +5,18 @@ import { v } from "convex/values";
 // That keeps the whole thing tiny (well inside the free tier) while carrying
 // everything a heatmap needs: where people were, per video and frame.
 export default defineSchema({
+  // The camera registry, seeded from cams-data.csv. One row per
+  // (company, site, camera). Drives the heatmap's cascading filters and lets a
+  // crop be tagged to a camera by matching the video name.
+  cameras: defineTable({
+    company: v.string(),
+    site: v.string(),
+    camera: v.string(),
+  })
+    .index("by_company", ["company"])
+    .index("by_company_site", ["company", "site"])
+    .index("by_camera", ["camera"]),
+
   // One row per saved crop, from any tool (inference web app, crop balancer, PPE).
   crops: defineTable({
     filename: v.string(), // e.g. Dyecoats_000120_0.48-0.38-0.20-0.52.jpg (unique key)
@@ -17,10 +29,16 @@ export default defineSchema({
     h: v.number(),
     source: v.string(), //   "inference_webapp" | "crop_balancer" | "ppe"
     conf: v.optional(v.number()), // detector confidence, when known
+    // Camera this crop came from, resolved from the video name against the
+    // registry. Absent when the video doesn't match a known camera.
+    company: v.optional(v.string()),
+    site: v.optional(v.string()),
+    camera: v.optional(v.string()),
     savedAt: v.number(), //  epoch ms
   })
     .index("by_filename", ["filename"])
-    .index("by_video", ["video"]),
+    .index("by_video", ["video"])
+    .index("by_camera", ["camera"]),
 
   // One row per saved annotation. Linked to a crop by filename when the annotated
   // image is one we produced (crop === filename); video/frame are denormalised

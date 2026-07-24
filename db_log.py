@@ -60,12 +60,19 @@ def _ensure_worker():
 
 def _run():
     global _sent, _failed
+    import cameras
     client = convex_client.get_client()
     if client is None:
         return
     while True:
         fn, args = _q.get()
         try:
+            # Tag crops with their camera here (off the request path) so the
+            # registry lookup never slows down a crop save.
+            if fn == "crops:record" and not args.get("camera"):
+                company, site, camera = cameras.resolve(args.get("video", ""))
+                if camera:
+                    args["company"], args["site"], args["camera"] = company, site, camera
             client.mutation(fn, args)
             _sent += 1
         except Exception:

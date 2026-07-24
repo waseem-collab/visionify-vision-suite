@@ -27,6 +27,7 @@ __THEME__
   .card.annotate .icon{background:var(--accent-soft);color:var(--accent);}
   .card.inference .icon{background:var(--ok-soft);color:var(--ok);}
   .card.crops .icon{background:var(--warn-soft);color:var(--warn);}
+  .card.heatmap .icon{background:rgba(219,39,119,.14);color:#db2777;}
   .card h2{font-size:17px;margin:0 0 8px;font-weight:650;}
   .card p{color:var(--text-muted);font-size:13px;line-height:1.6;margin:0 0 16px;flex:1;}
   .tools{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;}
@@ -70,6 +71,14 @@ __THEME__
         <p>Balance person crops across a video with a spatial grid, mine frames where a teacher and student model disagree, and review and clean up the resulting datasets one pair at a time.</p>
         <div class="tools"><span>Crop balancer</span><span>Disagreement mining</span><span>Dataset review</span></div>
         <span class="open">Open workspace →</span>
+      </a>
+
+      <a class="card heatmap" href="/heatmap">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></div>
+        <h2>Detection Heatmap</h2>
+        <p>See where people appear across a camera's frames, built from every crop and annotation logged to the database. Filter by company, site, camera and class.</p>
+        <div class="tools"><span>Company / site / camera</span><span>Class filter</span><span>Density grid</span></div>
+        <span class="open">Open heatmap →</span>
       </a>
     </div>
   </div>

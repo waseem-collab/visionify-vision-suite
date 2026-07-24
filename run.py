@@ -181,6 +181,75 @@ def convex_status():
             "logging": db_log.stats(), "detail": detail}
 
 
+# --------------------------------------------------------------------------- #
+# Heatmap: cascading filters from the camera registry + a density grid built
+# from the logged crops. All read-only Convex queries (no secret needed).
+# --------------------------------------------------------------------------- #
+def _convex_query(name, args):
+    client = convex_client.get_client()
+    if client is None:
+        return None
+    return client.query(name, args)
+
+
+@shell.get("/api/heatmap/cameras")
+def heatmap_cameras():
+    """The full camera registry — the page builds the company→site→camera
+    cascade from this."""
+    try:
+        return {"cameras": _convex_query("cameras:all", {}) or []}
+    except Exception as exc:
+        return {"cameras": [], "error": str(exc)}
+
+
+@shell.get("/api/heatmap/classes")
+def heatmap_classes():
+    """Distinct annotation class labels, for the class filter."""
+    try:
+        return {"classes": _convex_query("annotations:classes", {}) or []}
+    except Exception as exc:
+        return {"classes": [], "error": str(exc)}
+
+
+@shell.get("/api/heatmap/data")
+def heatmap_data():
+    """Bin the filtered crops into a density grid (16:9). Returns the grid of
+    counts, its max, and the total point count."""
+    filters = {k: request.args[k] for k in ("company", "site", "camera", "className")
+               if request.args.get(k)}
+    cols = max(8, min(int(request.args.get("cols", 40)), 80))
+    rows = max(5, round(cols * 9 / 16))
+    grid = [[0] * cols for _ in range(rows)]
+    peak = 0
+    count = 0
+    try:
+        res = _convex_query("crops:heatmap", filters)
+    except Exception as exc:
+        return {"cols": cols, "rows": rows, "cells": grid, "max": 0, "count": 0, "error": str(exc)}
+    if res:
+        count = int(res.get("count", 0))
+        for p in res.get("points", []):
+            gx = min(max(int(p["cx"] * cols), 0), cols - 1)
+            gy = min(max(int(p["cy"] * rows), 0), rows - 1)
+            grid[gy][gx] += 1
+            if grid[gy][gx] > peak:
+                peak = grid[gy][gx]
+    return {"cols": cols, "rows": rows, "cells": grid, "max": peak, "count": count}
+
+
+@shell.get("/heatmap")
+def heatmap_page():
+    page = (paths.ROOT / "templates" / "heatmap.html").read_text(encoding="utf-8")
+    page = (page
+            .replace("__THEME__", theme.stylesheet())
+            .replace("__THEME_SCRIPT__", theme.THEME_SCRIPT)
+            .replace("__THEME_JS__", theme.THEME_JS)
+            .replace("__THEME_BUTTON__", theme.THEME_BUTTON))
+    resp = Response(page, mimetype="text/html")
+    resp.headers["Cache-Control"] = "no-store, must-revalidate"
+    return resp
+
+
 @shell.get("/__livereload__")
 def livereload_token():
     return START_TOKEN, 200, {"Content-Type": "text/plain"}
@@ -312,7 +381,7 @@ if __name__ == "__main__":
             threaded=True,
             use_reloader=use_reload,
             use_debugger=False,
-            extra_files=[str(LANDING_TEMPLATE)],
+            extra_files=[str(LANDING_TEMPLATE), str(paths.ROOT / "templates" / "heatmap.html")],
         )
         _hard_exit(0)
     except SystemExit as exc:
