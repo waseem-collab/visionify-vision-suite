@@ -270,6 +270,25 @@ def heatmap_register():
     return {"ok": True, "tagged": (res or {}).get("tagged", 0)}
 
 
+@shell.post("/api/heatmap/import")
+def heatmap_import_start():
+    """Start importing a folder of YOLO label files into the database."""
+    import label_import
+    path = str((request.get_json(silent=True) or {}).get("path", "")).strip()
+    if not path:
+        return {"ok": False, "error": "A folder path is required."}, 400
+    err = label_import.start(path)
+    if err:
+        return {"ok": False, "error": err}, 409
+    return {"ok": True}
+
+
+@shell.get("/api/heatmap/import/status")
+def heatmap_import_status():
+    import label_import
+    return label_import.status()
+
+
 @shell.get("/heatmap")
 def heatmap_page():
     page = (paths.ROOT / "templates" / "heatmap.html").read_text(encoding="utf-8")

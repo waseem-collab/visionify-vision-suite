@@ -37,6 +37,43 @@ export const record = mutation({
   },
 });
 
+// Upsert many crops in one call (batched by the caller) — used by the label
+// importer so a big folder isn't thousands of round-trips.
+export const bulkRecord = mutation({
+  args: {
+    secret: v.string(),
+    items: v.array(
+      v.object({
+        filename: v.string(),
+        video: v.string(),
+        frame: v.number(),
+        cx: v.number(),
+        cy: v.number(),
+        w: v.number(),
+        h: v.number(),
+        source: v.string(),
+        conf: v.optional(v.number()),
+        company: v.optional(v.string()),
+        site: v.optional(v.string()),
+        camera: v.optional(v.string()),
+        savedAt: v.number(),
+      })
+    ),
+  },
+  handler: async (ctx, { secret, items }) => {
+    assertSecret(secret);
+    for (const doc of items) {
+      const existing = await ctx.db
+        .query("crops")
+        .withIndex("by_filename", (q) => q.eq("filename", doc.filename))
+        .unique();
+      if (existing) await ctx.db.patch(existing._id, doc);
+      else await ctx.db.insert("crops", doc);
+    }
+    return { count: items.length };
+  },
+});
+
 // Heatmap points for the given filters: every matching crop's (cx, cy).
 // company/site/camera narrow by the crop's camera tag; className keeps only
 // crops whose saved annotation includes that class. Empty filters = everything.

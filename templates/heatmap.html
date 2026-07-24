@@ -92,6 +92,17 @@ __THEME__
   .ncrow.done .inputs{display:none;}
   .ncrow .donemsg{color:var(--ok);font-size:12.5px;font-weight:600;margin-top:9px;display:none;}
   .ncrow.done .donemsg{display:block;}
+  .modal-b code{font-family:var(--mono);font-size:11.5px;background:var(--surface-2);padding:1px 5px;border-radius:4px;}
+  .imp-row{display:flex;gap:8px;}
+  .imp-row input{flex:1;min-width:0;height:38px;padding:8px 11px;font-size:12.5px;font-family:var(--mono);color:var(--text);
+    background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);}
+  .imp-row input:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring);}
+  .imp-prog{margin-top:16px;}
+  .imp-prog .bar{height:8px;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;overflow:hidden;}
+  .imp-prog .bar>div{height:100%;width:0;background:var(--accent);border-radius:5px;transition:width .3s;}
+  .imp-msg{font-size:12.5px;color:var(--text-muted);margin-top:9px;font-family:var(--mono);}
+  .imp-msg.err{color:var(--danger);}
+  .imp-msg.ok{color:var(--ok);}
 </style>
 </head>
 <body>
@@ -116,6 +127,7 @@ __THEME__
     <div class="toolbar">
       <span class="count" id="count">— crops</span>
       <button class="newcam-badge" id="newcam" hidden></button>
+      <button class="reset" id="import_btn">Import annotations</button>
       <button class="reset" id="reset">Reset filters</button>
       <span class="resbox">Resolution <input type="range" id="res" min="16" max="72" step="4" value="40"><span id="resval" class="mono">40</span></span>
     </div>
@@ -136,6 +148,23 @@ __THEME__
   </div>
 
   <div class="tip" id="tip"></div>
+
+  <div class="modal-bg" id="impmodal">
+    <div class="modal">
+      <div class="modal-h"><h3>Import annotations</h3><button class="x" id="imp_close" title="Close">×</button></div>
+      <div class="modal-b">
+        <p>Point at a dataset folder (or a bare <code>labels/</code> folder) of YOLO <code>.txt</code> files. Every annotation is read into the database. Where a file is named with the crop scheme (<code>&lt;video&gt;_&lt;frame&gt;_&lt;coords&gt;</code>), its position and camera fill in too, so it lands on the heatmap. Class names come from the folder's <code>labels.txt</code>.</p>
+        <div class="imp-row">
+          <input id="imp_path" placeholder="/path/to/dataset   or   /path/to/labels" spellcheck="false" />
+          <button class="addbtn" id="imp_go">Import</button>
+        </div>
+        <div class="imp-prog" id="imp_prog" hidden>
+          <div class="bar"><div id="imp_bar"></div></div>
+          <div id="imp_msg" class="imp-msg"></div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <div class="modal-bg" id="ncmodal">
     <div class="modal">
@@ -339,6 +368,44 @@ function openUnknownModal(){ renderUnknownModal(); $('ncmodal').classList.add('o
 $('newcam').addEventListener('click', openUnknownModal);
 $('nc_close').addEventListener('click', () => $('ncmodal').classList.remove('open'));
 $('ncmodal').addEventListener('click', (e) => { if (e.target === $('ncmodal')) $('ncmodal').classList.remove('open'); });
+
+// ---- Import a labels folder ----
+let impPoll = null;
+function openImportModal(){
+  $('imp_prog').hidden = true; $('imp_msg').textContent = ''; $('imp_msg').className = 'imp-msg';
+  $('imp_bar').style.width = '0'; $('imp_go').disabled = false;
+  $('impmodal').classList.add('open'); $('imp_path').focus();
+}
+async function startImport(){
+  const path = $('imp_path').value.trim(), msg = $('imp_msg');
+  $('imp_prog').hidden = false; msg.className = 'imp-msg';
+  if (!path){ msg.textContent = 'Enter a folder path.'; msg.classList.add('err'); return; }
+  $('imp_go').disabled = true; msg.textContent = 'Starting…';
+  let res;
+  try { res = await fetch('/api/heatmap/import', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ path }) }).then(r => r.json()); }
+  catch(e){ msg.textContent = 'Could not reach the server.'; msg.classList.add('err'); $('imp_go').disabled = false; return; }
+  if (!res.ok){ msg.textContent = res.error || 'Failed to start.'; msg.classList.add('err'); $('imp_go').disabled = false; return; }
+  impPoll = setInterval(pollImport, 500);
+}
+async function pollImport(){
+  let s; try { s = await fetch('/api/heatmap/import/status').then(r => r.json()); } catch(e){ return; }
+  const pct = s.total ? Math.round(s.processed / s.total * 100) : (s.running ? 6 : 0);
+  $('imp_bar').style.width = pct + '%';
+  const msg = $('imp_msg');
+  if (s.error){ msg.textContent = s.error; msg.className = 'imp-msg err'; }
+  else if (s.done){ msg.textContent = s.message || 'Done.'; msg.className = 'imp-msg ok'; }
+  else { msg.textContent = (s.processed || 0) + '/' + (s.total || '?') + ' files · ' + (s.annotations || 0) + ' annotations'; }
+  if (s.done || s.error){
+    clearInterval(impPoll); impPoll = null; $('imp_go').disabled = false;
+    await loadMeta(); await loadUnknown(); await draw();   // refresh filters + map with the new data
+  }
+}
+$('import_btn').addEventListener('click', openImportModal);
+$('imp_close').addEventListener('click', () => $('impmodal').classList.remove('open'));
+$('impmodal').addEventListener('click', (e) => { if (e.target === $('impmodal')) $('impmodal').classList.remove('open'); });
+$('imp_go').addEventListener('click', startImport);
+$('imp_path').addEventListener('keydown', (e) => { if (e.key === 'Enter') startImport(); });
 
 (async () => {
   await loadMeta();

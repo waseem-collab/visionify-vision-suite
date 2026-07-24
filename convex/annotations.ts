@@ -40,6 +40,45 @@ export const record = mutation({
   },
 });
 
+// Upsert many annotations in one call (batched by the caller) — the bulk path
+// for the label-folder importer.
+export const bulkRecord = mutation({
+  args: {
+    secret: v.string(),
+    items: v.array(
+      v.object({
+        image: v.string(),
+        crop: v.optional(v.string()),
+        video: v.optional(v.string()),
+        frame: v.optional(v.number()),
+        boxes: v.array(
+          v.object({
+            cls: v.number(),
+            cx: v.number(),
+            cy: v.number(),
+            w: v.number(),
+            h: v.number(),
+            className: v.optional(v.string()),
+          })
+        ),
+        savedAt: v.number(),
+      })
+    ),
+  },
+  handler: async (ctx, { secret, items }) => {
+    assertSecret(secret);
+    for (const doc of items) {
+      const existing = await ctx.db
+        .query("annotations")
+        .withIndex("by_image", (q) => q.eq("image", doc.image))
+        .unique();
+      if (existing) await ctx.db.patch(existing._id, doc);
+      else await ctx.db.insert("annotations", doc);
+    }
+    return { count: items.length };
+  },
+});
+
 // The distinct class labels seen across all annotations — populates the
 // heatmap's class filter.
 export const classes = query({
