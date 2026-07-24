@@ -9,7 +9,8 @@
     "start": "python3 run.py",
     "setup": "pip install -r requirements.txt",
     "convex:dev": "convex dev",
-    "convex:deploy": "convex deploy"
+    "convex:deploy": "convex deploy",
+    "share": "cloudflared tunnel --url http://localhost:8000 --no-autoupdate"
   },
   "keywords": ["yolo", "annotation", "cvat", "inference", "ppe", "computer-vision"],
   "license": "MIT",
