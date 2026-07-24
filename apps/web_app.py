@@ -142,7 +142,16 @@ runtime = {
 # The worker owns _worker_cap exclusively.
 cache_lock = threading.Lock()
 DISPLAY_PACE_FACTOR = 1.0           # playback pacing vs real time (1.0 = real time)
-CACHE_MAX_FRAMES = 8000            # LRU cap; also how much of a long video stays loaded
+# LRU cap on annotated frames kept in RAM. Each entry is a JPEG (~50–200 KB), so
+# this bounds the cache to a few hundred MB. Kept well below the old 8000 because
+# on a CPU-only machine holding thousands of frames pushes RAM into swap and
+# freezes the box. With the bounded prerender below, the cache rarely fills.
+CACHE_MAX_FRAMES = 1500
+# How far ahead of the playhead the prerender worker looks (frames, on the step
+# grid). It fills this window and then IDLES — instead of racing to annotate the
+# whole video, which pins every CPU core the moment a video is loaded (there is
+# no GPU to offload to). ~300 frames ≈ 10–15 s of lookahead at typical FPS.
+PRERENDER_AHEAD = 300
 
 frame_cache = OrderedDict()        # frame_idx -> (jpg_bytes, person_boxes); LRU order
 cache_state = {"cfg_key": "", "epoch": 0, "fill_cursor": 0}
@@ -202,32 +211,33 @@ def cached_ranges(step: int):
 def pick_next_to_annotate(playhead: int, step: int, total: int, fill_cursor: int):
     """
     Choose the next frame to annotate. Holds cache_lock. Returns (idx, new_cursor).
-    Strategy: fill EVERYTHING from the playhead to the END first (so pausing loads
-    the whole rest of the video), then backfill 0..playhead. A forward cursor keeps
-    the ahead-scan cheap; seeks reset it to the new position.
-    Returns (None, cursor) when there's nothing left to load right now.
+
+    Strategy: fill only a BOUNDED window ahead of the playhead
+    (PRERENDER_AHEAD frames), then stop. While playing, the playhead advances and
+    the window slides with it — so there is always at most a window's worth of
+    work pending, never the whole video. While paused it fills the window once and
+    then idles. This is what keeps the worker from pinning every CPU core (there is
+    no GPU here). Scrubbing outside the window re-renders on demand and re-caches.
+
+    Returns (None, cursor) when the window is fully cached (nothing to do now).
     """
-    # 1) Ahead of the playhead, to the end of the video. This ALWAYS runs — even at
-    #    the memory cap — because cache_put evicts the least-recently-used (far)
-    #    frame to make room, so the worker never stops loading what's coming up.
-    c = max(int(fill_cursor), int(playhead), 0)
-    while total <= 0 or c <= total - 1:
+    start = max(int(playhead), 0)
+    limit = start + PRERENDER_AHEAD * step
+    if total > 0:
+        limit = min(limit, total - 1)
+
+    # The cursor rides forward as we fill; a seek (or the playhead moving back)
+    # can leave it past the window, so snap it back to the window start.
+    c = max(int(fill_cursor), start)
+    if c > limit:
+        c = start
+
+    while c <= limit:
         if c not in frame_cache:
             return c, c + step       # annotate c, advance the cursor past it
         c += step
-        if total <= 0:
-            break
 
-    # 2) Everything ahead is cached — backfill 0..playhead, but only while there's
-    #    spare capacity (so backfill never fights the ahead-fill for cache slots).
-    if len(frame_cache) < CACHE_MAX_FRAMES:
-        b = 0
-        while b < playhead:
-            if b not in frame_cache:
-                return b, c          # keep the ahead-cursor where it is
-            b += step
-
-    return None, c                   # nothing to do right now
+    return None, c                   # window fully cached — idle until the playhead moves
 
 
 def worker_read(video: str, idx: int):

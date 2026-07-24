@@ -23,6 +23,7 @@ request.script_root supplies that mount point, so one hook serves every app.
 Run:  python3 run.py        (or: npm run dev)
 """
 import atexit
+import fcntl
 import os
 import sys
 import threading
@@ -47,8 +48,11 @@ HOST = os.environ.get("HOST", "0.0.0.0")
 # PORT is a *preference*, not a promise: if it is taken (a stale server, another
 # tool, a second copy of the suite) we serve on the next port that is free.
 # SUITE_PORT carries the resolved choice to the reloader's child processes so the
-# URL stays put across restarts.
-PORT = ports.resolve(int(os.environ.get("PORT", "8000")), HOST, env_var="SUITE_PORT")
+# URL stays put across restarts. We announce a moved port from the banner below
+# (once we know we're actually serving), not here — so a launch that ends up
+# refused by the single-instance guard doesn't first claim a port it won't use.
+_PREFERRED_PORT = int(os.environ.get("PORT", "8000"))
+PORT = ports.resolve(_PREFERRED_PORT, HOST, env_var="SUITE_PORT", announce=False)
 
 # A token unique to this process. When the dev launcher restarts the server on a
 # file change, the token changes and the injected live-reload script refreshes
@@ -197,6 +201,40 @@ def _open_browser_when_ready(url, delay_sec=1.0):
     threading.Thread(target=_open, daemon=True).start()
 
 
+_LOCK_PATH = paths.STATE_DIR / "suite.lock"
+_lock_fd = None  # kept open for the process lifetime so the lock stays held
+
+
+def _enforce_single_instance():
+    """Refuse to start a second copy of the suite.
+
+    Each suite process loads torch + three YOLO models (~4 GB) and, with no GPU
+    on this box, runs them on the CPU. A second copy started by accident — easy
+    now that the port finder means a re-launch no longer fails on a busy port —
+    can exhaust RAM and freeze the whole machine. So the first instance takes an
+    flock; a later one finds it held, points the user at the running server, and
+    bows out. flock frees itself when the holder dies, so there is no stale lock
+    to clean up (works even through the os._exit in _hard_exit).
+    """
+    global _lock_fd
+    _lock_fd = open(_LOCK_PATH, "a+")
+    try:
+        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        _lock_fd.seek(0)
+        where = _lock_fd.read().strip()
+        print("\n  The Vision Suite is already running"
+              + (f" ({where})" if where else "") + ".")
+        print("  Open that one, or stop it first (Ctrl-C in its terminal) "
+              "before starting another.\n")
+        raise SystemExit(1)
+    # Won the lock — record who/where for the next launch's message.
+    _lock_fd.seek(0)
+    _lock_fd.truncate()
+    _lock_fd.write(f"pid {os.getpid()} · http://127.0.0.1:{PORT}")
+    _lock_fd.flush()
+
+
 def _hard_exit(code):
     """Leave without letting the interpreter finalize.
 
@@ -217,6 +255,12 @@ def _hard_exit(code):
 
 
 if __name__ == "__main__":
+    # Hold the single-instance lock in the long-lived top-level process. Under the
+    # reloader that is the watcher parent (WERKZEUG_RUN_MAIN unset); the restarted
+    # child inherits the running server and must NOT re-check, so it skips this.
+    if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+        _enforce_single_instance()
+
     # Auto-reload on any .py (or the landing template) change — the "npm run dev"
     # behaviour. NO_RELOAD=1 disables it (e.g. for production).
     use_reload = os.environ.get("NO_RELOAD") != "1"
@@ -226,6 +270,8 @@ if __name__ == "__main__":
     serving = (not use_reload) or os.environ.get("WERKZEUG_RUN_MAIN") == "true"
     if serving:
         _start_workers()
+        if PORT != _PREFERRED_PORT:
+            print(f"\n  Port {_PREFERRED_PORT} is in use — using {PORT} instead.")
         url = f"http://127.0.0.1:{PORT}"
         print(f"\n  Vision Suite on {url}   (auto-reloads on edits)")
         print(f"    Landing             {url}/")
