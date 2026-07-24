@@ -38,10 +38,23 @@ are no functions yet, so nothing exists on the deployment.
    get_client().query("crops:list", {})
    ```
 
-## Auth
+## Auth — server identity (not Clerk)
 
-If your functions require authentication, set `CONVEX_AUTH_TOKEN` in `.env`; the
-Python client applies it via `set_auth()` before any call.
+This suite is a trusted backend tool, so it does **not** use Clerk end-user auth.
+Clerk logs users in from a browser and mints short-lived per-user JWTs, which
+don't map onto a serverless Python app. Instead, when we add functions they
+should authorize the server directly, one of:
+
+- **Shared secret argument** — the app passes a secret (e.g. `CONVEX_SHARED_SECRET`
+  from `.env`) as a function argument, and each function checks it before acting.
+  Simple and explicit.
+- **Convex admin key** — the Python client calls `set_admin_auth(deploy_key)` for
+  full-access server calls. Powerful (bypasses function-level checks), so reserve
+  it for trusted server contexts and keep `CONVEX_DEPLOY_KEY` secret.
+
+Either way there are no expiring tokens to refresh. `CONVEX_AUTH_TOKEN`
+(`set_auth`) remains available for a future token-based caller but is unused
+today.
 
 ## Deploying
 
