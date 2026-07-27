@@ -1,7 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { assertSecret } from "./lib/auth";
-import { guessCameraName } from "./lib/cameraName";
+import { guessCameraName, resolveCamera } from "./lib/cameraName";
 
 // Record one saved crop. Upserts by filename, so re-running the same video (the
 // crop names are deterministic) updates rather than duplicates.
@@ -25,6 +25,16 @@ export const record = mutation({
   handler: async (ctx, args) => {
     assertSecret(args.secret);
     const { secret, ...doc } = args;
+    // The server is the tagging authority: resolve the camera here so a crop
+    // from a client with a stale/old registry cache still tags correctly.
+    if (!doc.camera) {
+      const cam = resolveCamera(doc.video, await ctx.db.query("cameras").collect());
+      if (cam) {
+        doc.company = cam.company;
+        doc.site = cam.site;
+        doc.camera = cam.camera;
+      }
+    }
     const existing = await ctx.db
       .query("crops")
       .withIndex("by_filename", (q) => q.eq("filename", doc.filename))
@@ -62,7 +72,17 @@ export const bulkRecord = mutation({
   },
   handler: async (ctx, { secret, items }) => {
     assertSecret(secret);
+    const registry = await ctx.db.query("cameras").collect();
     for (const doc of items) {
+      // Same server-side tagging as crops:record.
+      if (!doc.camera) {
+        const cam = resolveCamera(doc.video, registry);
+        if (cam) {
+          doc.company = cam.company;
+          doc.site = cam.site;
+          doc.camera = cam.camera;
+        }
+      }
       const existing = await ctx.db
         .query("crops")
         .withIndex("by_filename", (q) => q.eq("filename", doc.filename))
@@ -137,9 +157,13 @@ export const unknownCameras = query({
   args: {},
   handler: async (ctx) => {
     const rows = await ctx.db.query("crops").collect();
+    const registry = await ctx.db.query("cameras").collect();
     const groups: Record<string, { camera: string; count: number; sampleVideo: string }> = {};
     for (const r of rows) {
       if (r.camera) continue; // already tagged to a known camera
+      // An untagged crop whose video matches a REGISTERED camera (by name or
+      // alias) is a stale-client stray, not a new camera — never prompt for it.
+      if (resolveCamera(r.video, registry)) continue;
       const g = guessCameraName(r.video);
       if (!groups[g]) groups[g] = { camera: g, count: 0, sampleVideo: r.video };
       groups[g].count++;

@@ -35,7 +35,7 @@ from ultralytics import YOLO
 # Repo root on the path so this module can be imported directly as well as via
 # the suite launcher (python3 apps/crop_balancer_app.py still works).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from core import cropnames, db_log, paths, ports
+from core import cropnames, paths, ports
 from core import theme as suite_theme
 
 paths.ensure_dirs()
@@ -621,10 +621,8 @@ def process_one_video(video_path, model, total, rows, cols, conf, stride, report
             # <video>_<frame>_<yolo cx-cy-w-h>.jpg (shared across every tool).
             fname = cropnames.yolo_crop_name(video_stem, fidx, (x1, y1, x2, y2), fw, fh)
             cv2.imwrite(str(out_dir / fname), crop)
-            # Best-effort metadata log to Convex (never blocks, never raises).
-            bcx, bcy, bw, bh = cropnames.yolo_coords((x1, y1, x2, y2), fw, fh)
-            db_log.record_crop(fname, video_stem, fidx, bcx, bcy, bw, bh,
-                               source="crop_balancer", conf=d["conf"])
+            # Crop saves do NOT log to Convex — the database only updates when
+            # an image gets annotated (see db_log.record_annotation).
             per_cell_counts[r][c] += 1
             manifest["crops"].append(
                 {"file": fname, "cell": [r, c], "frame": fidx,

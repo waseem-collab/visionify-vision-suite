@@ -10,3 +10,37 @@ export function guessCameraName(videoStem: string): string {
   const stripped = stem.replace(/_\d{6,8}([_-]\d{2,6})*$/, "");
   return stripped || stem;
 }
+
+// True when a video stem belongs to `name`: equal, or `name` is a prefix
+// followed by a separator (mirrors cameras.py resolve()).
+export function matchesPrefix(stem: string, name: string): boolean {
+  if (!name) return false;
+  if (stem === name) return true;
+  if (!stem.startsWith(name)) return false;
+  return ["_", "-", ".", " "].includes(stem[name.length]);
+}
+
+// Resolve a video stem against the registry rows (camera name, alias, and all
+// merged aliases). Longest match wins so the most specific camera claims the
+// video. Returns the matching row or null.
+type CameraRow = {
+  camera: string;
+  company: string;
+  site: string;
+  alias?: string;
+  aliases?: string[];
+};
+export function resolveCamera<T extends CameraRow>(stem: string, rows: T[]): T | null {
+  let best: T | null = null;
+  let bestLen = -1;
+  for (const row of rows) {
+    const names = [row.camera, row.alias ?? "", ...(row.aliases ?? [])];
+    for (const name of names) {
+      if (name.length > bestLen && matchesPrefix(stem, name)) {
+        best = row;
+        bestLen = name.length;
+      }
+    }
+  }
+  return best;
+}

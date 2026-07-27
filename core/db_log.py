@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-Best-effort logging of crops and annotations to Convex.
+Best-effort logging of annotations to Convex.
 
-Every tool calls ``record_crop`` / ``record_annotation`` right after it writes a
-file. Those calls are cheap and NON-BLOCKING: the metadata is dropped on a queue
-and a single background thread posts it to Convex. The design rules:
+ONLY annotating updates the database. Saving a crop (from any tool) writes
+nothing — the tools produce files on disk and that's it. When an image is
+annotated, ``record_annotation`` logs the annotation, and — when the image is
+one of our crops — upserts its crop row too, so the heatmap point is created by
+the annotation event, not by the crop tools. The design rules:
 
 - **Never break a tool.** If Convex is down, unconfigured, slow, or erroring, the
-  crop/annotation is still saved to disk; we just lose (or drop) the DB row. No
+  annotation is still saved to disk; we just lose (or drop) the DB row. No
   exception ever propagates back to the caller.
 - **Off the request path.** Handlers return immediately; the network call to
   Convex happens on the worker thread, so playback/annotation never waits on it.
@@ -25,7 +27,7 @@ import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from core import convex_client
+from core import convex_client, cropnames
 
 # Bounded so a Convex outage can never grow memory without limit — old events are
 # dropped once it fills (best-effort, not a durable log).
@@ -98,24 +100,6 @@ def stats():
             "sent": _sent, "failed": _failed, "dropped": _dropped}
 
 
-def record_crop(filename, video, frame, cx, cy, w, h, source, conf=None):
-    """Log one saved crop. Coordinates are YOLO (normalised to the frame)."""
-    if not enabled():
-        return
-    args = {
-        "secret": convex_client.shared_secret(),
-        "filename": os.path.basename(str(filename)),
-        "video": str(video),
-        "frame": int(frame),
-        "cx": float(cx), "cy": float(cy), "w": float(w), "h": float(h),
-        "source": str(source),
-        "savedAt": int(time.time() * 1000),
-    }
-    if conf is not None:
-        args["conf"] = float(conf)
-    _enqueue("crops:record", args)
-
-
 def record_annotation(image, boxes, crop=None, video=None, frame=None):
     """Log one saved annotation. ``boxes`` is a list of dicts with YOLO
     cls/cx/cy/w/h (and optional className) — the app's own box format."""
@@ -148,6 +132,19 @@ def record_annotation(image, boxes, crop=None, video=None, frame=None):
     if frame is not None:
         args["frame"] = int(frame)
     _enqueue("annotations:record", args)
+    # The annotation event is also what puts the image on the heatmap: when the
+    # annotated image is one of our crops, upsert its crop row now. Crop SAVES
+    # never log — this is the only path that creates crop rows.
+    link = cropnames.parse_crop_name(args.get("crop") or args["image"])
+    if link:
+        _enqueue("crops:record", {
+            "secret": args["secret"],
+            "filename": args.get("crop") or args["image"],
+            "video": link["video"], "frame": link["frame"],
+            "cx": link["cx"], "cy": link["cy"], "w": link["w"], "h": link["h"],
+            "source": "annotation",
+            "savedAt": args["savedAt"],
+        })
 
 
 @atexit.register

@@ -9,9 +9,11 @@ numbers, YOLO coordinates and annotation labels. A crop row is ~0.4 KB, so even
 
 ## Data model (`schema.ts`)
 
-- **crops** — one row per saved crop, from any tool. `filename` (unique), `video`,
-  `frame`, YOLO `cx/cy/w/h`, `source` (`inference_webapp` | `crop_balancer` |
-  `ppe`), optional `conf`, `savedAt`. The `cx/cy` are what a heatmap plots.
+- **crops** — one row per crop that has been ANNOTATED. Saving a crop from any
+  tool writes nothing; the row is created by the annotation event (`source:
+  "annotation"`) or a bulk label import (`"label_import"`). `filename` (unique),
+  `video`, `frame`, YOLO `cx/cy/w/h`, `savedAt`. The `cx/cy` are what a heatmap
+  plots.
 - **annotations** — one row per saved annotation. `image` (unique), the drawn
   `boxes` (YOLO cls/cx/cy/w/h + className), and — when the image is a crop we
   made — `crop`/`video`/`frame` linking it back to the source crop and frame.
