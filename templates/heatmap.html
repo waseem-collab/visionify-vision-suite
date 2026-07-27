@@ -37,7 +37,10 @@ __THEME__
   .combo input:disabled::placeholder{color:var(--text-muted);}
   .combo-list{position:absolute;top:calc(100% + 5px);left:0;right:0;z-index:60;display:none;padding:4px;
     background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);
-    max-height:280px;overflow-y:auto;box-shadow:0 12px 32px rgba(0,0,0,.45);}
+    max-height:380px;overflow-y:auto;box-shadow:0 12px 32px rgba(0,0,0,.45);scrollbar-width:thin;}
+  .combo-list::-webkit-scrollbar{width:10px;}
+  .combo-list::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:5px;}
+  .combo-list::-webkit-scrollbar-thumb:hover{background:var(--accent);}
   .combo.open .combo-list{display:block;}
   .combo-list .op{padding:7px 10px;font-size:13px;color:var(--text);cursor:pointer;border-radius:6px;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -90,23 +93,26 @@ __THEME__
   .modal-h .x{margin-left:auto;cursor:pointer;color:var(--text-muted);background:none;border:none;font-size:22px;line-height:1;}
   .modal-b{padding:16px 20px;}
   .modal-b > p{margin:0 0 14px;color:var(--text-muted);font-size:13px;line-height:1.55;}
-  .ncrow{border:1px solid var(--border);border-radius:var(--r);padding:12px 13px;margin-bottom:11px;}
-  .ncrow .name{font-family:var(--mono);font-weight:700;color:var(--text);font-size:13.5px;}
-  .ncrow .meta{font-size:11.5px;color:var(--text-muted);margin:2px 0 11px;word-break:break-all;}
-  .ncrow .inputs{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;align-items:end;}
+  .ncsel{display:flex;align-items:flex-start;gap:10px;border:1px solid var(--border);border-radius:var(--r);
+    padding:10px 12px;margin-bottom:8px;cursor:pointer;}
+  .ncsel:hover{background:var(--surface-2);}
+  .ncsel input{margin-top:3px;accent-color:var(--accent);}
+  .ncsel .info{display:flex;flex-direction:column;gap:2px;min-width:0;}
+  .ncsel .name{font-family:var(--mono);font-weight:700;color:var(--text);font-size:13px;}
+  .ncsel .meta{font-size:11.5px;color:var(--text-muted);word-break:break-all;}
+  .ncform{border-top:1px solid var(--border);margin-top:12px;padding-top:12px;}
+  .ncform .inputs{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;align-items:end;}
+  .ncdone{color:var(--ok);font-size:12.5px;font-weight:600;margin:0 0 12px;}
+  .ncerr{color:var(--danger);font-size:12px;margin-top:8px;min-height:14px;}
   .field-lil{display:flex;flex-direction:column;gap:4px;min-width:0;}
   .field-lil label{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);}
-  .ncrow input{height:34px;padding:7px 9px;font-size:13px;color:var(--text);background:var(--surface-2);
+  .ncform input{height:34px;padding:7px 9px;font-size:13px;color:var(--text);background:var(--surface-2);
     border:1px solid var(--border-2);border-radius:var(--r);}
-  .ncrow input:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring);}
-  .ncrow .addbtn{height:34px;padding:0 15px;font-weight:600;color:var(--accent-fg);background:var(--accent);
+  .ncform input:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring);}
+  .ncform .addbtn{height:34px;padding:0 15px;font-weight:600;color:var(--accent-fg);background:var(--accent);
     border:none;border-radius:var(--r);cursor:pointer;white-space:nowrap;}
-  .ncrow .addbtn:hover{background:var(--accent-hover);}
-  .ncrow .addbtn:disabled{opacity:.55;cursor:default;}
-  .ncrow.done{opacity:.6;}
-  .ncrow.done .inputs{display:none;}
-  .ncrow .donemsg{color:var(--ok);font-size:12.5px;font-weight:600;margin-top:9px;display:none;}
-  .ncrow.done .donemsg{display:block;}
+  .ncform .addbtn:hover{background:var(--accent-hover);}
+  .ncform .addbtn:disabled{opacity:.55;cursor:default;}
   .modal-b code{font-family:var(--mono);font-size:11.5px;background:var(--surface-2);padding:1px 5px;border-radius:4px;}
   .imp-row{display:flex;gap:8px;}
   .imp-row input{flex:1;min-width:0;height:38px;padding:8px 11px;font-size:12.5px;font-family:var(--mono);color:var(--text);
@@ -190,7 +196,7 @@ __THEME__
     <div class="modal">
       <div class="modal-h"><h3><span class="dotw"></span>New cameras detected</h3><button class="x" id="nc_close" title="Close">×</button></div>
       <div class="modal-b">
-        <p>These cameras appear in your logged crops but aren't in the registry. Add each to a company and site so its crops show up on the heatmap. The camera name comes from the video and is used to match future clips automatically.</p>
+        <p>These names appear in your logged crops but aren't in the registry. Tick one or more, pick the company/site and the camera they belong to, and Add — every ticked name becomes an alias of that camera, so its crops (and future clips) tag there automatically.</p>
         <div id="nclist"></div>
       </div>
     </div>
@@ -244,9 +250,12 @@ function makeCombo(id, allLabel){
     input.dataset.v = v; input.value = v; close();
     input.dispatchEvent(new Event('change'));
   }
+  // Separator-insensitive match: "media room" or "media_room" finds
+  // "Media-Room-C" — names mix hyphens/underscores, typing shouldn't need to.
+  const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '');
   function render(q){
-    q = q.trim().toLowerCase();
-    visible = [''].concat(options.filter(o => !q || o.toLowerCase().includes(q)));
+    q = norm(q);
+    visible = [''].concat(options.filter(o => !q || norm(o).includes(q)));
     hl = q && visible.length > 1 ? 1 : 0;   // typing pre-highlights the best match
     list.innerHTML = '';
     visible.forEach((o, i) => {
@@ -296,17 +305,17 @@ const combos = {
 };
 
 function fillCompanies(){
-  combos.company.set([...new Set(CAMERAS.map(c => c.company))].sort());
+  combos.company.set([...new Set(CAMERAS.map(c => c.company))].sort((a, b) => a.localeCompare(b)));
 }
 function fillSites(){
   const company = $('f_company').value;
-  combos.site.set([...new Set(CAMERAS.filter(c => !company || c.company === company).map(c => c.site))].sort());
+  combos.site.set([...new Set(CAMERAS.filter(c => !company || c.company === company).map(c => c.site))].sort((a, b) => a.localeCompare(b)));
   combos.site.disabled = !company;
 }
 function fillCameras(){
   const company = $('f_company').value, site = $('f_site').value;
   combos.camera.set([...new Set(CAMERAS.filter(c => (!company || c.company === company) && (!site || c.site === site))
-                      .map(c => c.camera))].sort());
+                      .map(c => c.camera))].sort((a, b) => a.localeCompare(b)));
   combos.camera.disabled = !company;
 }
 
@@ -485,55 +494,96 @@ function freeCombo(input, optionsFn){
   });
 }
 
-function renderUnknownModal(){
+function renderUnknownModal(doneMsg){
   const list = $('nclist'); list.innerHTML = '';
-  if (!UNKNOWN.length){ list.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">No new cameras right now.</p>'; return; }
+  const esc = (s) => String(s).replace(/</g,'&lt;');
+  if (doneMsg){
+    const p = document.createElement('p'); p.className = 'ncdone'; p.textContent = doneMsg;
+    list.appendChild(p);
+  }
+  if (!UNKNOWN.length){
+    const p = document.createElement('p');
+    p.style.cssText = 'color:var(--text-muted);font-size:13px;';
+    p.textContent = 'No new cameras right now.';
+    list.appendChild(p);
+    return;
+  }
+  // Tick the discovered names that belong together (all of them can go under
+  // one camera). A single discovery starts pre-ticked.
+  const chosen = new Set(UNKNOWN.length === 1 ? [UNKNOWN[0].camera] : []);
   UNKNOWN.forEach((u) => {
-    const esc = (s) => String(s).replace(/</g,'&lt;');
-    const row = document.createElement('div'); row.className = 'ncrow';
+    const row = document.createElement('label'); row.className = 'ncsel';
     row.innerHTML =
-      '<div class="name">' + esc(u.camera) + '</div>' +
-      '<div class="meta">' + u.count + ' crop' + (u.count===1?'':'s') + ' · e.g. ' + esc(u.sampleVideo) + '</div>' +
-      '<div class="inputs">' +
-        '<div class="field-lil"><label>Company</label><div class="combo"><input placeholder="Company" data-k="company" autocomplete="off" spellcheck="false"><div class="combo-list"></div></div></div>' +
-        '<div class="field-lil"><label>Site</label><div class="combo"><input placeholder="Site" data-k="site" autocomplete="off" spellcheck="false"><div class="combo-list"></div></div></div>' +
-        '<div class="field-lil"><label>Camera name</label><input data-k="camera" autocomplete="off" spellcheck="false" title="Rename the camera, or leave as detected"></div>' +
-        '<button class="addbtn">Add</button>' +
-      '</div>' +
-      '<div class="donemsg"></div>';
-    const comp = row.querySelector('[data-k=company]'), st = row.querySelector('[data-k=site]'),
-          cam = row.querySelector('[data-k=camera]'), btn = row.querySelector('.addbtn');
-    cam.value = u.camera;   // save-as-is default: the name detected from the video
-    freeCombo(comp, () => [...new Set(CAMERAS.map(c => c.company))].sort());
-    freeCombo(st, () => {
-      // Only the chosen company's sites; everything while company is new/blank.
-      const rel = CAMERAS.filter(c => c.company === comp.value.trim());
-      return [...new Set((rel.length ? rel : CAMERAS).map(c => c.site))].sort();
-    });
-    comp.addEventListener('change', () => {
-      const rel = new Set(CAMERAS.filter(c => c.company === comp.value.trim()).map(c => c.site));
-      if (rel.size && st.value && !rel.has(st.value)) st.value = '';   // stale site from another company
-    });
-    btn.addEventListener('click', async () => {
-      const company = comp.value.trim(), site = st.value.trim(), camera = cam.value.trim() || u.camera;
-      comp.style.borderColor = company ? '' : 'var(--danger)';
-      st.style.borderColor = site ? '' : 'var(--danger)';
-      if (!company || !site) return;
-      btn.disabled = true; btn.textContent = 'Adding…';
-      try {
-        const res = await fetch('/api/heatmap/register', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ company, site, camera, alias: u.camera }),
-        }).then(r => r.json());
-        if (res.ok){
-          row.classList.add('done');
-          row.querySelector('.donemsg').textContent = '✓ Added ' + camera + ' to ' + company + ' / ' + site + ' — ' + res.tagged + ' crop' + (res.tagged===1?'':'s') + ' tagged.';
-          await loadMeta(); await loadUnknown(); await draw();
-        } else { btn.disabled = false; btn.textContent = 'Retry'; }
-      } catch(e){ btn.disabled = false; btn.textContent = 'Retry'; }
-    });
+      '<input type="checkbox">' +
+      '<span class="info"><span class="name">' + esc(u.camera) + '</span>' +
+      '<span class="meta">' + u.count + ' crop' + (u.count===1?'':'s') + ' · e.g. ' + esc(u.sampleVideo) + '</span></span>';
+    const cb = row.querySelector('input');
+    cb.checked = chosen.has(u.camera);
+    cb.addEventListener('change', () => { cb.checked ? chosen.add(u.camera) : chosen.delete(u.camera); sync(); });
     list.appendChild(row);
   });
+
+  // One form: every ticked name registers under this camera.
+  const form = document.createElement('div'); form.className = 'ncform';
+  form.innerHTML =
+    '<div class="inputs">' +
+      '<div class="field-lil"><label>Company</label><div class="combo"><input placeholder="Company" data-k="company" autocomplete="off" spellcheck="false"><div class="combo-list"></div></div></div>' +
+      '<div class="field-lil"><label>Site</label><div class="combo"><input placeholder="Site" data-k="site" autocomplete="off" spellcheck="false"><div class="combo-list"></div></div></div>' +
+      '<div class="field-lil"><label>Camera name</label><input data-k="camera" autocomplete="off" spellcheck="false" title="The camera the ticked names belong to — an existing one or a new name"></div>' +
+      '<button class="addbtn" disabled>Add</button>' +
+    '</div>' +
+    '<div class="ncerr"></div>';
+  const comp = form.querySelector('[data-k=company]'), st = form.querySelector('[data-k=site]'),
+        cam = form.querySelector('[data-k=camera]'), btn = form.querySelector('.addbtn'),
+        err = form.querySelector('.ncerr');
+  let camTouched = false;
+  cam.addEventListener('input', () => { camTouched = true; });
+  function sync(){
+    btn.disabled = !chosen.size;
+    btn.textContent = chosen.size > 1 ? 'Add ' + chosen.size : 'Add';
+    if (!camTouched) cam.value = chosen.size ? [...chosen][0] : '';
+  }
+  sync();
+  freeCombo(comp, () => [...new Set(CAMERAS.map(c => c.company))].sort((a, b) => a.localeCompare(b)));
+  freeCombo(st, () => {
+    // Only the chosen company's sites; everything while company is new/blank.
+    const rel = CAMERAS.filter(c => c.company === comp.value.trim());
+    return [...new Set((rel.length ? rel : CAMERAS).map(c => c.site))].sort((a, b) => a.localeCompare(b));
+  });
+  comp.addEventListener('change', () => {
+    const rel = new Set(CAMERAS.filter(c => c.company === comp.value.trim()).map(c => c.site));
+    if (rel.size && st.value && !rel.has(st.value)) st.value = '';   // stale site from another company
+  });
+  btn.addEventListener('click', async () => {
+    const company = comp.value.trim(), site = st.value.trim();
+    const camera = cam.value.trim() || [...chosen][0];
+    comp.style.borderColor = company ? '' : 'var(--danger)';
+    st.style.borderColor = site ? '' : 'var(--danger)';
+    if (!company || !site || !chosen.size) return;
+    btn.disabled = true; btn.textContent = 'Adding…'; err.textContent = '';
+    let tagged = 0;
+    try {
+      // One register per ticked name — the first creates (or finds) the
+      // camera, the rest fold in as aliases.
+      for (const name of chosen){
+        const res = await fetch('/api/heatmap/register', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ company, site, camera, alias: name }),
+        }).then(r => r.json());
+        if (!res.ok) throw new Error(res.error || 'register failed for ' + name);
+        tagged += res.tagged || 0;
+      }
+      const n = chosen.size;
+      await loadMeta(); await loadUnknown(); await draw();
+      renderUnknownModal('✓ Added ' + n + ' name' + (n===1?'':'s') + ' under ' + camera +
+                         ' — ' + tagged + ' crop' + (tagged===1?'':'s') + ' tagged.');
+    } catch(e){
+      err.textContent = String(e.message || e);
+      btn.disabled = false; sync();
+      await loadUnknown();
+    }
+  });
+  list.appendChild(form);
 }
 function openUnknownModal(){ renderUnknownModal(); $('ncmodal').classList.add('open'); }
 $('newcam').addEventListener('click', openUnknownModal);

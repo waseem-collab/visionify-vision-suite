@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cameras · Vision Suite</title>
+__THEME_SCRIPT__
+<style>
+__THEME__
+  html,body{margin:0;min-height:100%;}
+  body{display:flex;flex-direction:column;}
+  .topbar{display:flex;align-items:center;gap:14px;padding:16px 22px;border-bottom:1px solid var(--border);}
+  .brand{display:flex;align-items:center;gap:9px;font-weight:800;letter-spacing:2px;font-size:13px;color:var(--text);}
+  .brand .dot{width:9px;height:9px;border-radius:50%;background:var(--accent);}
+  .spacer{flex:1;}
+  .wrap{max-width:1100px;width:100%;margin:0 auto;padding:24px 22px 48px;}
+  h1{font-size:22px;margin:0 0 4px;font-weight:650;display:flex;align-items:center;gap:11px;}
+  h1::before{content:"";width:4px;height:20px;border-radius:2px;background:var(--accent);}
+  .sub{color:var(--text-muted);margin:0 0 20px;font-size:13.5px;}
+
+  .toolbar{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap;}
+  .search{flex:1;min-width:220px;height:38px;padding:8px 12px;font-size:13px;color:var(--text);
+    background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);
+    transition:border-color .14s,box-shadow .14s;}
+  .search:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring);}
+  .count{font-family:var(--mono);font-size:13px;color:var(--text);background:var(--surface-2);
+    border:1px solid var(--border);border-radius:999px;padding:5px 13px;white-space:nowrap;}
+  .count b{color:var(--accent);}
+
+  /* Searchable dropdown (same pattern as the heatmap filters) */
+  .combo{position:relative;width:210px;}
+  .combo input{width:100%;height:38px;padding:8px 12px;font-size:13px;color:var(--text);
+    background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);
+    transition:border-color .14s,box-shadow .14s;text-overflow:ellipsis;}
+  .combo input:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring);}
+  .combo input::placeholder{color:var(--text);opacity:1;}
+  .combo-list{position:absolute;top:calc(100% + 5px);left:0;right:0;z-index:60;display:none;padding:4px;
+    background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);
+    max-height:380px;overflow-y:auto;box-shadow:0 12px 32px rgba(0,0,0,.45);scrollbar-width:thin;}
+  .combo-list::-webkit-scrollbar{width:10px;}
+  .combo-list::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:5px;}
+  .combo-list::-webkit-scrollbar-thumb:hover{background:var(--accent);}
+  .combo.open .combo-list{display:block;}
+  .combo-list .op{padding:7px 10px;font-size:13px;color:var(--text);cursor:pointer;border-radius:6px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .combo-list .op:hover,.combo-list .op.hl{background:var(--accent);color:var(--accent-fg);}
+  .combo-list .op.all{color:var(--text-muted);font-style:italic;}
+  .combo-list .op.all:hover,.combo-list .op.all.hl{color:var(--accent-fg);}
+
+  /* Camera rows */
+  .rows{border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;}
+  .row{display:grid;grid-template-columns:92px 1.3fr 1fr 1fr auto;gap:14px;align-items:center;
+    padding:10px 14px;border-bottom:1px solid var(--border);}
+  .row:last-child{border-bottom:none;}
+  .row:hover{background:var(--surface-2);}
+  .row .thumb{width:78px;height:44px;border-radius:7px;background:var(--surface-2);object-fit:cover;display:block;}
+  .row .nothumb{width:78px;height:44px;border-radius:7px;background:var(--surface-2);display:grid;place-items:center;
+    color:var(--text-dim);font-size:10px;}
+  .row .name{font-family:var(--mono);font-weight:700;font-size:13px;color:var(--text);word-break:break-all;}
+  .row .alias{font-size:11px;color:var(--text-muted);font-family:var(--mono);}
+  .row .cell{font-size:12.5px;color:var(--text-muted);word-break:break-word;}
+  .row .acts{display:flex;gap:7px;}
+  .btn{font-size:12px;color:var(--text-muted);background:none;border:1px solid var(--border-2);
+    border-radius:var(--r);padding:6px 11px;cursor:pointer;transition:border-color .14s,color .14s;}
+  .btn:hover{color:var(--text);border-color:var(--accent);}
+  .btn.danger:hover{color:var(--danger);border-color:var(--danger);}
+  .btn.confirm{color:var(--danger);border-color:var(--danger);font-weight:600;}
+  .empty{padding:32px;text-align:center;color:var(--text-muted);font-size:13px;}
+
+  /* Edit modal */
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:100;padding:20px;}
+  .modal-bg.open{display:flex;}
+  .modal{background:var(--surface);border:1px solid var(--border-2);border-radius:var(--r-lg);max-width:520px;width:100%;}
+  .modal-h{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;}
+  .modal-h h3{margin:0;font-size:16px;font-weight:650;}
+  .modal-h .x{margin-left:auto;cursor:pointer;color:var(--text-muted);background:none;border:none;font-size:22px;line-height:1;}
+  .modal-b{padding:16px 20px;display:flex;flex-direction:column;gap:12px;}
+  .f{display:flex;flex-direction:column;gap:5px;}
+  .f label{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--text-muted);font-weight:600;}
+  .f input{height:36px;padding:8px 11px;font-size:13px;color:var(--text);background:var(--surface-2);
+    border:1px solid var(--border-2);border-radius:var(--r);transition:border-color .14s,box-shadow .14s;}
+  .f input:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring);}
+  .f .combo{width:100%;}
+  .f .hint{font-size:11px;color:var(--text-muted);}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;}
+  .chips:empty{display:none;}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-family:var(--mono);color:var(--text);
+    background:var(--surface-2);border:1px solid var(--border-2);border-radius:999px;padding:4px 6px 4px 11px;}
+  .chip button{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;line-height:1;padding:0 3px;}
+  .chip button:hover{color:var(--danger);}
+  .preview{width:100%;max-height:180px;object-fit:cover;border-radius:var(--r);display:none;}
+  .modal-f{display:flex;align-items:center;gap:10px;padding:14px 20px;border-top:1px solid var(--border);}
+  .savebtn{height:36px;padding:0 18px;font-weight:600;color:var(--accent-fg);background:var(--accent);
+    border:none;border-radius:var(--r);cursor:pointer;}
+  .savebtn:disabled{opacity:.55;cursor:default;}
+  .err{color:var(--danger);font-size:12.5px;}
+  @media (max-width:760px){ .row{grid-template-columns:92px 1fr auto;} .row .cell{display:none;} }
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="dot"></span>VISION SUITE</div>
+    <div class="spacer"></div>
+    <a class="home-btn" href="/home" title="Back to the suite"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5"/><path d="M9.5 21v-6h5v6"/></svg>Suite</a>
+    __THEME_BUTTON__
+  </header>
+
+  <div class="wrap">
+    <h1>Camera Configuration</h1>
+    <p class="sub">The camera registry — every camera's company, site, name and scene thumbnail. Edits propagate to logged crops and the heatmap filters.</p>
+
+    <div class="toolbar">
+      <input class="search" id="q" placeholder="Search cameras, companies, sites…" autocomplete="off" spellcheck="false">
+      <div class="combo"><input id="f_company" placeholder="All companies" autocomplete="off" spellcheck="false"><div class="combo-list"></div></div>
+      <div class="combo"><input id="f_site" placeholder="All sites" autocomplete="off" spellcheck="false"><div class="combo-list"></div></div>
+      <span class="count" id="count">—</span>
+    </div>
+
+    <div class="rows" id="rows"></div>
+  </div>
+
+  <div class="modal-bg" id="emodal">
+    <div class="modal">
+      <div class="modal-h"><h3 id="e_title">Edit camera</h3><button class="x" id="e_close" title="Close">×</button></div>
+      <div class="modal-b">
+        <div class="f"><label>Camera name</label><input id="e_name" autocomplete="off" spellcheck="false">
+          <span class="hint" id="e_alias_hint"></span></div>
+        <div class="f"><label>Company</label><div class="combo"><input id="e_company" autocomplete="off" spellcheck="false"><div class="combo-list"></div></div></div>
+        <div class="f"><label>Site</label><div class="combo"><input id="e_site" autocomplete="off" spellcheck="false"><div class="combo-list"></div></div></div>
+        <div class="f"><label>Thumbnail URL</label><input id="e_thumb" autocomplete="off" spellcheck="false" placeholder="https://… (empty to remove)">
+          <img class="preview" id="e_preview" alt=""></div>
+        <div class="f"><label>Rename these cameras into this one</label>
+          <div class="combo"><input id="e_merge" autocomplete="off" spellcheck="false" placeholder="Search a camera to merge…"><div class="combo-list"></div></div>
+          <div class="chips" id="e_chips"></div>
+          <span class="hint">Type a name and press Enter to add it. Registered cameras are folded in (crops move here, their entry is removed); any other name becomes an alias and claims its untagged crops. Either way its videos match here from now on.</span></div>
+      </div>
+      <div class="modal-f">
+        <button class="savebtn" id="e_save">Save</button>
+        <span class="err" id="e_err"></span>
+      </div>
+    </div>
+  </div>
+
+<script>
+__THEME_JS__
+
+const $ = (id) => document.getElementById(id);
+// Separator-insensitive matching: "media room" finds "Media-Room-C".
+const norm = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+let CAMS = [];
+let editing = null;   // the camera row being edited
+
+// ---- Searchable dropdown helpers (same pattern as the heatmap page) --------
+function freeCombo(input, optionsFn, { allLabel = null, onPick = null, free = false } = {}){
+  const box = input.parentElement, list = box.querySelector('.combo-list');
+  let visible = [], hl = -1;
+  if (allLabel) input.dataset.v = '';
+  function commit(v, label){
+    if (allLabel){ input.dataset.v = v; input.value = v; }
+    else input.value = v;
+    box.classList.remove('open');
+    if (onPick) onPick(v);
+  }
+  function render(){
+    const q = norm(input.value);
+    const opts = optionsFn().filter(o => !q || norm(o).includes(q));
+    visible = allLabel ? [''].concat(opts) : opts;
+    hl = visible.length ? (allLabel && !q ? 0 : (visible.length > (allLabel ? 1 : 0) ? (allLabel ? 1 : 0) : 0)) : -1;
+    list.innerHTML = '';
+    visible.forEach((o, i) => {
+      const d = document.createElement('div');
+      d.className = 'op' + (allLabel && !o ? ' all' : '') + (i === hl ? ' hl' : '');
+      d.textContent = o || allLabel;
+      d.addEventListener('mousedown', e => { e.preventDefault(); commit(o); });
+      list.appendChild(d);
+    });
+    box.classList.toggle('open', visible.length > 0);
+  }
+  let navigated = false;   // arrow keys used → Enter picks the highlight
+  input.addEventListener('focus', () => { if (allLabel) input.select(); render(); });
+  input.addEventListener('input', () => { navigated = false; render(); });
+  input.addEventListener('blur', () => { if (allLabel) input.value = input.dataset.v; box.classList.remove('open'); });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && free){
+      // Free entry: Enter takes whatever was typed (a highlighted suggestion
+      // only wins if the user arrowed onto it).
+      e.preventDefault();
+      const typed = input.value.trim();
+      if (navigated && box.classList.contains('open') && hl >= 0) commit(visible[hl]);
+      else if (typed) commit(typed);
+      else if (box.classList.contains('open') && hl >= 0) commit(visible[hl]);
+      navigated = false;
+      return;
+    }
+    if (!box.classList.contains('open')) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp'){
+      e.preventDefault();
+      navigated = true;
+      hl = Math.max(0, Math.min(visible.length - 1, hl + (e.key === 'ArrowDown' ? 1 : -1)));
+      [...list.children].forEach((d, i) => { d.classList.toggle('hl', i === hl); if (i === hl) d.scrollIntoView({block:'nearest'}); });
+    } else if (e.key === 'Enter'){ e.preventDefault(); if (hl >= 0) commit(visible[hl]); }
+    else if (e.key === 'Escape'){ box.classList.remove('open'); }
+  });
+}
+
+// ---- List ------------------------------------------------------------------
+freeCombo($('f_company'), () => [...new Set(CAMS.map(c => c.company))].sort((a, b) => a.localeCompare(b)),
+          { allLabel: 'All companies', onPick: (v) => {
+            // A site from another company can't stay selected.
+            const rel = new Set(CAMS.filter(c => !v || c.company === v).map(c => c.site));
+            const st = $('f_site');
+            if (st.dataset.v && !rel.has(st.dataset.v)){ st.dataset.v = ''; st.value = ''; }
+            render();
+          }});
+freeCombo($('f_site'), () => {
+  const comp = $('f_company').dataset.v || '';
+  return [...new Set(CAMS.filter(c => !comp || c.company === comp).map(c => c.site))].sort((a, b) => a.localeCompare(b));
+}, { allLabel: 'All sites', onPick: render });
+$('q').addEventListener('input', render);
+
+function aliasList(c){
+  return [c.alias, ...(c.aliases || [])].filter(Boolean);
+}
+
+function render(){
+  const q = norm($('q').value);
+  const comp = $('f_company').dataset.v || '';
+  const site = $('f_site').dataset.v || '';
+  const rows = CAMS.filter(c =>
+    (!comp || c.company === comp) && (!site || c.site === site) &&
+    (!q || [c.camera, c.company, c.site, ...aliasList(c)].some(s => norm(s).includes(q))));
+  $('count').innerHTML = '<b>' + rows.length + '</b> / ' + CAMS.length + ' cameras';
+  const host = $('rows'); host.innerHTML = '';
+  if (!rows.length){ host.innerHTML = '<div class="empty">No cameras match.</div>'; return; }
+  const esc = (s) => String(s ?? '').replace(/</g,'&lt;');
+  rows.forEach(c => {
+    const div = document.createElement('div'); div.className = 'row';
+    div.innerHTML =
+      (c.thumbnail ? '<img class="thumb" loading="lazy" src="' + esc(c.thumbnail).replace(/"/g,'&quot;') + '">'
+                   : '<div class="nothumb">no image</div>') +
+      '<div><div class="name">' + esc(c.camera) + '</div>' +
+        (aliasList(c).length ? '<div class="alias">matches: ' + esc(aliasList(c).join(', ')) + '</div>' : '') + '</div>' +
+      '<div class="cell">' + esc(c.company) + '</div>' +
+      '<div class="cell">' + esc(c.site) + '</div>' +
+      '<div class="acts"><button class="btn e">Edit</button><button class="btn danger d">Delete</button></div>';
+    div.querySelector('.e').addEventListener('click', () => openEdit(c));
+    const del = div.querySelector('.d');
+    del.addEventListener('click', async () => {
+      if (!del.classList.contains('confirm')){
+        del.classList.add('confirm'); del.textContent = 'Confirm?';
+        setTimeout(() => { del.classList.remove('confirm'); del.textContent = 'Delete'; }, 2500);
+        return;
+      }
+      del.disabled = true; del.textContent = 'Deleting…';
+      const res = await fetch('/api/cameras/delete', { method: 'POST',
+        headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ camera: c.camera }) })
+        .then(r => r.json()).catch(() => ({}));
+      if (res.ok) await load();
+      else { del.disabled = false; del.textContent = 'Retry'; }
+    });
+    host.appendChild(div);
+  });
+}
+
+async function load(){
+  try { CAMS = (await fetch('/api/heatmap/cameras').then(r => r.json())).cameras || []; }
+  catch(e){ CAMS = []; }
+  render();
+}
+
+// ---- Edit modal ------------------------------------------------------------
+freeCombo($('e_company'), () => [...new Set(CAMS.map(c => c.company))].sort((a, b) => a.localeCompare(b)));
+freeCombo($('e_site'), () => {
+  const rel = CAMS.filter(c => c.company === $('e_company').value.trim());
+  return [...new Set((rel.length ? rel : CAMS).map(c => c.site))].sort((a, b) => a.localeCompare(b));
+});
+
+// Cameras queued to be merged into the one being edited.
+let mergeSel = [];
+function renderChips(){
+  const host = $('e_chips'); host.innerHTML = '';
+  mergeSel.forEach((name, i) => {
+    const chip = document.createElement('span'); chip.className = 'chip';
+    chip.textContent = name;
+    const x = document.createElement('button'); x.textContent = '×'; x.title = 'Remove';
+    x.addEventListener('click', () => { mergeSel.splice(i, 1); renderChips(); });
+    chip.appendChild(x);
+    host.appendChild(chip);
+  });
+}
+freeCombo($('e_merge'), () =>
+  CAMS.map(c => c.camera)
+      .filter(n => editing && n !== editing.camera && !mergeSel.includes(n))
+      .sort(),
+  { free: true,
+    onPick: (v) => {
+      v = v.trim();
+      if (v && v !== (editing && editing.camera) && !mergeSel.includes(v)){ mergeSel.push(v); renderChips(); }
+      $('e_merge').value = '';
+    } });
+
+function openEdit(c){
+  editing = c;
+  mergeSel = []; renderChips(); $('e_merge').value = '';
+  $('e_title').textContent = 'Edit · ' + c.camera;
+  $('e_name').value = c.camera;
+  $('e_company').value = c.company;
+  $('e_site').value = c.site;
+  $('e_thumb').value = c.thumbnail || '';
+  const al = aliasList(c);
+  $('e_alias_hint').textContent = al.length
+    ? 'Matches videos named: ' + al.map(a => a + '_*').join(', ') + ' — renaming keeps that.'
+    : 'Renaming keeps videos matching via the old name automatically.';
+  $('e_err').textContent = '';
+  updatePreview();
+  $('emodal').classList.add('open');
+}
+function updatePreview(){
+  const url = $('e_thumb').value.trim(), img = $('e_preview');
+  if (!url){ img.style.display = 'none'; return; }
+  img.onload = () => { img.style.display = 'block'; };
+  img.onerror = () => { img.style.display = 'none'; };
+  img.src = url;
+}
+$('e_thumb').addEventListener('change', updatePreview);
+$('e_close').addEventListener('click', () => $('emodal').classList.remove('open'));
+$('emodal').addEventListener('click', (e) => { if (e.target === $('emodal')) $('emodal').classList.remove('open'); });
+
+$('e_save').addEventListener('click', async () => {
+  if (!editing) return;
+  // Text typed in the merge box but not yet Entered still counts.
+  const pending = $('e_merge').value.trim();
+  if (pending && pending !== editing.camera && !mergeSel.includes(pending)){
+    mergeSel.push(pending); renderChips(); $('e_merge').value = '';
+  }
+  const name = $('e_name').value.trim(), company = $('e_company').value.trim(), site = $('e_site').value.trim();
+  if (!name || !company || !site){ $('e_err').textContent = 'Name, company and site are required.'; return; }
+  const body = { camera: editing.camera };
+  if (name !== editing.camera) body.newName = name;
+  if (company !== editing.company) body.company = company;
+  if (site !== editing.site) body.site = site;
+  if ($('e_thumb').value.trim() !== (editing.thumbnail || '')) body.thumbnail = $('e_thumb').value.trim();
+  if (mergeSel.length) body.mergeFrom = [...mergeSel];
+  if (Object.keys(body).length === 1){ $('emodal').classList.remove('open'); return; }  // nothing changed
+  const btn = $('e_save'); btn.disabled = true; btn.textContent = 'Saving…';
+  const res = await fetch('/api/cameras/update', { method: 'POST',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) })
+    .then(r => r.json()).catch(() => ({}));
+  btn.disabled = false; btn.textContent = 'Save';
+  if (res.ok){ $('emodal').classList.remove('open'); await load(); }
+  else $('e_err').textContent = res.error || 'Save failed — try again.';
+});
+
+load();
+</script>
+</body>
+</html>

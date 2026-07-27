@@ -34,6 +34,7 @@ __THEME__
   .card.inference .icon{background:var(--ok-soft);color:var(--ok);}
   .card.crops .icon{background:var(--warn-soft);color:var(--warn);}
   .card.heatmap .icon{background:rgba(219,39,119,.14);color:#db2777;}
+  .card.cameras .icon{background:rgba(20,184,166,.14);color:#14b8a6;}
   .card h2{font-size:17px;margin:0 0 8px;font-weight:650;}
   .card p{color:var(--text-muted);font-size:13px;line-height:1.6;margin:0 0 16px;flex:1;}
   .tools{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;}
@@ -85,6 +86,14 @@ __THEME__
         <p>See where people appear across a camera's frames, built from every crop and annotation logged to the database. Filter by company, site, camera and class.</p>
         <div class="tools"><span>Company / site / camera</span><span>Class filter</span><span>Density grid</span></div>
         <span class="open">Open heatmap →</span>
+      </a>
+
+      <a class="card cameras" href="/cameras">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3.5"/></svg></div>
+        <h2>Camera Configuration</h2>
+        <p>Browse and manage the camera registry — every camera's company, site, name and scene thumbnail. Search across all cameras, edit or rename them, and remove ones that don't belong.</p>
+        <div class="tools"><span>Registry</span><span>Thumbnails</span><span>Rename</span><span>Search</span></div>
+        <span class="open">Open configuration →</span>
       </a>
     </div>
   </div>

@@ -148,6 +148,58 @@ export const unknownCameras = query({
   },
 });
 
+// Delete specific crops by filename, plus any annotations linked to them
+// (matching by annotation image or its crop link). Precise cleanup for
+// mistaken uploads; names with no matching row are reported back.
+export const deleteByFilenames = mutation({
+  args: { secret: v.string(), filenames: v.array(v.string()) },
+  handler: async (ctx, { secret, filenames }) => {
+    assertSecret(secret);
+    let crops = 0;
+    const notFound: string[] = [];
+    for (const filename of filenames) {
+      const row = await ctx.db
+        .query("crops")
+        .withIndex("by_filename", (q) => q.eq("filename", filename))
+        .unique();
+      if (row) { await ctx.db.delete(row._id); crops++; }
+      else notFound.push(filename);
+    }
+    const wanted = new Set(filenames);
+    let annotations = 0;
+    for (const a of await ctx.db.query("annotations").collect()) {
+      if (wanted.has(a.image) || (a.crop && wanted.has(a.crop))) {
+        await ctx.db.delete(a._id);
+        annotations++;
+      }
+    }
+    return { crops, annotations, notFound };
+  },
+});
+
+// Delete every crop tagged to one company, plus annotations linked to those
+// crops. The camera registry is untouched — only logged crop data goes.
+export const deleteByCompany = mutation({
+  args: { secret: v.string(), company: v.string() },
+  handler: async (ctx, { secret, company }) => {
+    assertSecret(secret);
+    const rows = await ctx.db.query("crops").collect();
+    const doomed = rows.filter((r) => r.company === company);
+    const filenames = new Set(doomed.map((r) => r.filename));
+    for (const r of doomed) await ctx.db.delete(r._id);
+    let annotations = 0;
+    if (filenames.size) {
+      for (const a of await ctx.db.query("annotations").collect()) {
+        if (filenames.has(a.image) || (a.crop && filenames.has(a.crop))) {
+          await ctx.db.delete(a._id);
+          annotations++;
+        }
+      }
+    }
+    return { crops: doomed.length, annotations };
+  },
+});
+
 // Delete every untagged crop grouped under one guessed camera name — i.e. the
 // rows behind a single "new camera detected" entry — plus any annotations
 // linked to those crops. Used to discard junk/test uploads instead of

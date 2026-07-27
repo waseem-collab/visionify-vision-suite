@@ -26,6 +26,9 @@ export default defineSchema({
     // registration (e.g. camera "Yard East" with alias "Mayfield" still tags
     // videos named Mayfield_*). Absent when the camera name IS the prefix.
     alias: v.optional(v.string()),
+    // Additional video-name prefixes, accumulated when other cameras are merged
+    // into this one — each keeps its old videos matching here.
+    aliases: v.optional(v.array(v.string())),
   })
     .index("by_company", ["company"])
     .index("by_company_site", ["company", "site"])

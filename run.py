@@ -310,6 +310,68 @@ def heatmap_page():
     return resp
 
 
+@shell.get("/cameras")
+def cameras_page():
+    page = (paths.ROOT / "templates" / "cameras.html").read_text(encoding="utf-8")
+    page = (page
+            .replace("__THEME__", theme.stylesheet())
+            .replace("__THEME_SCRIPT__", theme.THEME_SCRIPT)
+            .replace("__THEME_JS__", theme.THEME_JS)
+            .replace("__THEME_BUTTON__", theme.THEME_BUTTON))
+    resp = Response(page, mimetype="text/html")
+    resp.headers["Cache-Control"] = "no-store, must-revalidate"
+    return resp
+
+
+def _camera_mutation(name, args):
+    """Run a registry mutation and refresh the resolver cache."""
+    client = convex_client.get_client()
+    if client is None:
+        return None, ({"ok": False, "error": "Convex not configured"}, 400)
+    try:
+        res = client.mutation(name, {"secret": convex_client.shared_secret(), **args})
+    except Exception as exc:
+        return None, ({"ok": False, "error": str(exc)}, 502)
+    from core import cameras as _cams
+    _cams.refresh()
+    return res, None
+
+
+@shell.post("/api/cameras/update")
+def cameras_update():
+    """Edit a registry camera (rename / company / site / thumbnail / alias)."""
+    payload = request.get_json(silent=True) or {}
+    camera = str(payload.get("camera", "")).strip()
+    if not camera:
+        return {"ok": False, "error": "camera is required"}, 400
+    args = {"camera": camera}
+    for k in ("newName", "company", "site", "thumbnail", "alias"):
+        if k in payload:
+            args[k] = str(payload[k]).strip()
+    merge = payload.get("mergeFrom")
+    if isinstance(merge, list):
+        merge = [str(m).strip() for m in merge if str(m).strip()]
+        if merge:
+            args["mergeFrom"] = merge
+    res, err = _camera_mutation("cameras:update", args)
+    if err:
+        return err
+    return {"ok": True, "retagged": (res or {}).get("retagged", 0)}
+
+
+@shell.post("/api/cameras/delete")
+def cameras_delete():
+    """Remove a camera from the registry (its crops are untagged, not deleted)."""
+    payload = request.get_json(silent=True) or {}
+    camera = str(payload.get("camera", "")).strip()
+    if not camera:
+        return {"ok": False, "error": "camera is required"}, 400
+    res, err = _camera_mutation("cameras:remove", args={"camera": camera})
+    if err:
+        return err
+    return {"ok": True, "untagged": (res or {}).get("untagged", 0)}
+
+
 # --------------------------------------------------------------------------- #
 # Auth: login (password or Google), logout, and the admin allowlist page.
 # --------------------------------------------------------------------------- #

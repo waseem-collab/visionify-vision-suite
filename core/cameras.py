@@ -45,7 +45,14 @@ def _load():
                 client = convex_client.get_client()
                 if client is not None:
                     for r in client.query("cameras:all", {}):
-                        rows.append((r.get("alias") or r["camera"], r["company"], r["site"], r["camera"]))
+                        # The camera answers to its own name, its rename alias,
+                        # and every name merged into it.
+                        names = {r["camera"]}
+                        if r.get("alias"):
+                            names.add(r["alias"])
+                        names.update(r.get("aliases") or [])
+                        for n in names:
+                            rows.append((n, r["company"], r["site"], r["camera"]))
             except Exception:
                 rows = []
             # Longest match first, so the most specific prefix wins if one
