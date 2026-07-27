@@ -26,7 +26,7 @@ from flask import redirect, request
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from werkzeug.security import check_password_hash, generate_password_hash
 
-import convex_client
+from core import convex_client
 
 COOKIE = "vs_auth"
 MAX_AGE = 7 * 24 * 3600  # a week

@@ -50,28 +50,14 @@ dataset/
 datasets/
 
 # --- Generated output ------------------------------------------------------
-# CVAT task exports, unpacked
-imports/
-# ground truth pulled from CVAT for validate / compare runs
-validation/
-# person crops captured from the live stream
-crops/
-# annotated videos rendered by "export"
-exports/
-# balanced crop batches
-person_crops/
-# heatmaps + manifests
-crop_reports/
-# teacher / student mining output
-disagreement_frames/
+# Every tool's runtime output lives under data/ (see core/paths.py):
+# imports/ validation/ crops/ exports/ person_crops/ crop_reports/
+# disagreement_frames/
+data/
 
-# --- Per-user runtime state (remembered inputs, caches, run history) --------
+# --- Per-user runtime state (remembered inputs, settings, caches, history) ---
 .state/
-web_app_settings.json
-crop_balancer_settings.json
-disagreement_settings.json
-review_settings.json
 
-# Seed data for the camera registry (customer/company names) — kept local;
-# the registry itself lives in Convex. Re-seed with cameras:seed from this file.
-cams-data.csv
+# Seed data (customer/company names + thumbnail URLs) — kept local; the
+# registry itself lives in Convex. Re-seed with cameras:seed / setThumbnails.
+seed/

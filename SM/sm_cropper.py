@@ -21,7 +21,7 @@ from ultralytics import YOLO
 
 # Repo root on the path so this stays runnable standalone (python3 SM/sm_cropper.py).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import paths
+from core import paths
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Weights come from the suite-wide model pool, shared with every other tool.

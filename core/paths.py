@@ -13,8 +13,10 @@ import from anywhere (including the reloader's watcher process).
 import os
 from pathlib import Path
 
-# Repo root — the directory holding run.py, models/, imports/, PPE/, SM/ …
-ROOT = Path(__file__).resolve().parent
+# Repo root — the directory holding run.py, models/, data/, PPE/, SM/ …
+ROOT = Path(__file__).resolve().parent.parent  # this file lives in core/
+# All generated/runtime output lands under one folder, so the root stays clean.
+DATA_DIR = Path(os.getenv("DATA_DIR") or (ROOT / "data"))
 
 # --------------------------------------------------------------------------- #
 # Shared assets
@@ -31,33 +33,33 @@ UPLOAD_MODELS_DIR = MODELS_DIR / "_uploaded"
 # Annotation studio
 # --------------------------------------------------------------------------- #
 # CVAT tasks are exported and unpacked here (one folder per task).
-IMPORTS_DIR = Path(os.getenv("IMPORTS_DIR") or (ROOT / "imports"))
+IMPORTS_DIR = Path(os.getenv("IMPORTS_DIR") or (DATA_DIR / "imports"))
 # Ground-truth pulled from CVAT for model validation / comparison runs.
-VAL_DIR = Path(os.getenv("VAL_DIR") or (ROOT / "validation"))
+VAL_DIR = Path(os.getenv("VAL_DIR") or (DATA_DIR / "validation"))
 
 # --------------------------------------------------------------------------- #
 # Inference web app
 # --------------------------------------------------------------------------- #
-CROPS_ROOT = ROOT / "crops"              # person crops saved from the live stream
-EXPORTS_ROOT = ROOT / "exports"          # annotated videos rendered by "export"
+CROPS_ROOT = DATA_DIR / "crops"              # person crops saved from the live stream
+EXPORTS_ROOT = DATA_DIR / "exports"          # annotated videos rendered by "export"
 
 # --------------------------------------------------------------------------- #
 # Crop tools
 # --------------------------------------------------------------------------- #
-PERSON_CROPS_ROOT = ROOT / "person_crops"        # balanced crop batches
-REPORTS_ROOT = ROOT / "crop_reports"             # heatmaps + manifests
-DISAGREE_ROOT = ROOT / "disagreement_frames"     # teacher/student mining output
+PERSON_CROPS_ROOT = DATA_DIR / "person_crops"        # balanced crop batches
+REPORTS_ROOT = DATA_DIR / "crop_reports"             # heatmaps + manifests
+DISAGREE_ROOT = DATA_DIR / "disagreement_frames"     # teacher/student mining output
 
 # --------------------------------------------------------------------------- #
 # Per-user state (all gitignored — remembered form inputs, caches, history)
 # --------------------------------------------------------------------------- #
 STATE_DIR = ROOT / ".state"
 
-APP_SETTINGS_FILE = ROOT / "web_app_settings.json"
-CROP_SETTINGS_FILE = ROOT / "crop_balancer_settings.json"
-DISAGREE_SETTINGS_FILE = ROOT / "disagreement_settings.json"
-REVIEW_SETTINGS_FILE = ROOT / "review_settings.json"
-PPE_PROMPTS_FILE = ROOT / "ppe_prompts.json"
+APP_SETTINGS_FILE = STATE_DIR / "web_app_settings.json"
+CROP_SETTINGS_FILE = STATE_DIR / "crop_balancer_settings.json"
+DISAGREE_SETTINGS_FILE = STATE_DIR / "disagreement_settings.json"
+REVIEW_SETTINGS_FILE = STATE_DIR / "review_settings.json"
+PPE_PROMPTS_FILE = ROOT / "PPE" / "ppe_prompts.json"
 
 ANNOTATION_STATE_FILE = STATE_DIR / "annotation_app_state.json"
 CVAT_CACHE_FILE = STATE_DIR / "cvat_cache.json"

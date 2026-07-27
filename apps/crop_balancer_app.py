@@ -35,11 +35,8 @@ from ultralytics import YOLO
 # Repo root on the path so this module can be imported directly as well as via
 # the suite launcher (python3 apps/crop_balancer_app.py still works).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import cropnames
-import db_log
-import paths
-import ports
-import theme as suite_theme
+from core import cropnames, db_log, paths, ports
+from core import theme as suite_theme
 
 paths.ensure_dirs()
 

@@ -13,8 +13,7 @@ filter by company / site / camera.
 import re
 import threading
 
-import convex_client
-import cropnames
+from core import convex_client, cropnames
 
 # Trailing date/time on a video stem, e.g. "_20260722-052339" or "_20260706_142252".
 _DATE_SUFFIX = re.compile(r"_\d{6,8}([_-]\d{2,6})*$")
@@ -27,12 +26,15 @@ def guess_camera_name(video_stem):
     return _DATE_SUFFIX.sub("", stem) or stem
 
 _lock = threading.Lock()
-_registry = None  # list of (camera, company, site), sorted longest-name-first
+_registry = None  # list of (match, company, site, camera), sorted longest-match-first
 
 
 def _load():
     """Fetch the camera registry from Convex once and cache it. Best-effort:
-    on any failure the resolver simply matches nothing."""
+    on any failure the resolver simply matches nothing.
+
+    ``match`` is the video-name prefix to match — the camera's alias when the
+    user renamed it at registration, otherwise the camera name itself."""
     global _registry
     if _registry is not None:
         return _registry
@@ -43,10 +45,10 @@ def _load():
                 client = convex_client.get_client()
                 if client is not None:
                     for r in client.query("cameras:all", {}):
-                        rows.append((r["camera"], r["company"], r["site"]))
+                        rows.append((r.get("alias") or r["camera"], r["company"], r["site"], r["camera"]))
             except Exception:
                 rows = []
-            # Longest camera name first, so the most specific prefix wins if one
+            # Longest match first, so the most specific prefix wins if one
             # camera name happens to be a prefix of another.
             rows.sort(key=lambda t: len(t[0]), reverse=True)
             _registry = rows
@@ -60,10 +62,10 @@ def resolve(video_stem):
     separator (``_``, ``-``, ``.`` or space) — i.e. ``<camera>_<date>``.
     """
     stem = cropnames.clean_video_name(video_stem)
-    for camera, company, site in _load():
-        if stem == camera:
+    for match, company, site, camera in _load():
+        if stem == match:
             return (company, site, camera)
-        if stem.startswith(camera) and stem[len(camera):len(camera) + 1] in ("_", "-", ".", " "):
+        if stem.startswith(match) and stem[len(match):len(match) + 1] in ("_", "-", ".", " "):
             return (company, site, camera)
     return (None, None, None)
 

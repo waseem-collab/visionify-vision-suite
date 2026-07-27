@@ -22,14 +22,29 @@ __THEME__
   .filters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:8px;}
   .field{display:flex;flex-direction:column;gap:5px;min-width:0;}
   .field label{font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--text-muted);font-weight:600;}
-  .field select{width:100%;height:38px;padding:8px 30px 8px 11px;font-size:13px;color:var(--text);
+  .field select,.combo input{width:100%;height:38px;padding:8px 30px 8px 11px;font-size:13px;color:var(--text);
     background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);cursor:pointer;
     appearance:none;-webkit-appearance:none;
     background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5' fill='none' stroke='%238a8a8a' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
     background-repeat:no-repeat;background-position:right 11px center;transition:border-color .14s,box-shadow .14s;}
-  .field select:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring);}
-  .field select:disabled{opacity:.5;cursor:not-allowed;}
+  .field select:focus,.combo input:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring);}
+  .field select:disabled,.combo input:disabled{opacity:.5;cursor:not-allowed;}
   .field select option{background:var(--surface-2);color:var(--text);}
+  /* Searchable dropdowns: input + filtered list */
+  .combo{position:relative;}
+  .combo input{cursor:text;text-overflow:ellipsis;}
+  .combo input::placeholder{color:var(--text);opacity:1;}
+  .combo input:disabled::placeholder{color:var(--text-muted);}
+  .combo-list{position:absolute;top:calc(100% + 5px);left:0;right:0;z-index:60;display:none;padding:4px;
+    background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);
+    max-height:280px;overflow-y:auto;box-shadow:0 12px 32px rgba(0,0,0,.45);}
+  .combo.open .combo-list{display:block;}
+  .combo-list .op{padding:7px 10px;font-size:13px;color:var(--text);cursor:pointer;border-radius:6px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .combo-list .op:hover,.combo-list .op.hl{background:var(--accent);color:var(--accent-fg);}
+  .combo-list .op.all{color:var(--text-muted);font-style:italic;}
+  .combo-list .op.all:hover,.combo-list .op.all.hl{color:var(--accent-fg);}
+  .combo-list .none{padding:8px 10px;font-size:12px;color:var(--text-muted);}
   .toolbar{display:flex;align-items:center;gap:14px;margin:14px 0 16px;flex-wrap:wrap;}
   .count{font-family:var(--mono);font-size:13px;color:var(--text);background:var(--surface-2);
     border:1px solid var(--border);border-radius:999px;padding:5px 13px;}
@@ -78,7 +93,7 @@ __THEME__
   .ncrow{border:1px solid var(--border);border-radius:var(--r);padding:12px 13px;margin-bottom:11px;}
   .ncrow .name{font-family:var(--mono);font-weight:700;color:var(--text);font-size:13.5px;}
   .ncrow .meta{font-size:11.5px;color:var(--text-muted);margin:2px 0 11px;word-break:break-all;}
-  .ncrow .inputs{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end;}
+  .ncrow .inputs{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;align-items:end;}
   .field-lil{display:flex;flex-direction:column;gap:4px;min-width:0;}
   .field-lil label{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);}
   .ncrow input{height:34px;padding:7px 9px;font-size:13px;color:var(--text);background:var(--surface-2);
@@ -118,10 +133,14 @@ __THEME__
     <p class="sub">Where people appear across a camera's frames. Pick a company, site and camera — and optionally a class — to filter.</p>
 
     <div class="filters">
-      <div class="field"><label for="f_company">Company</label><select id="f_company"></select></div>
-      <div class="field"><label for="f_site">Site</label><select id="f_site" disabled></select></div>
-      <div class="field"><label for="f_camera">Camera</label><select id="f_camera" disabled></select></div>
-      <div class="field"><label for="f_class">Class</label><select id="f_class"></select></div>
+      <div class="field"><label for="f_company">Company</label>
+        <div class="combo"><input id="f_company" autocomplete="off" spellcheck="false" placeholder="All companies"><div class="combo-list"></div></div></div>
+      <div class="field"><label for="f_site">Site</label>
+        <div class="combo"><input id="f_site" autocomplete="off" spellcheck="false" placeholder="All sites" disabled><div class="combo-list"></div></div></div>
+      <div class="field"><label for="f_camera">Camera</label>
+        <div class="combo"><input id="f_camera" autocomplete="off" spellcheck="false" placeholder="All cameras" disabled><div class="combo-list"></div></div></div>
+      <div class="field"><label for="f_class">Class</label>
+        <div class="combo"><input id="f_class" autocomplete="off" spellcheck="false" placeholder="All classes"><div class="combo-list"></div></div></div>
     </div>
 
     <div class="toolbar">
@@ -130,6 +149,7 @@ __THEME__
       <button class="reset" id="import_btn">Import annotations</button>
       <button class="reset" id="reset">Reset filters</button>
       <span class="resbox">Resolution <input type="range" id="res" min="16" max="72" step="4" value="40"><span id="resval" class="mono">40</span></span>
+      <span class="resbox">Overlay <input type="range" id="op" min="10" max="100" step="5" value="100"><span id="opval" class="mono">100%</span></span>
     </div>
 
     <div class="stage-wrap">
@@ -172,8 +192,6 @@ __THEME__
       <div class="modal-b">
         <p>These cameras appear in your logged crops but aren't in the registry. Add each to a company and site so its crops show up on the heatmap. The camera name comes from the video and is used to match future clips automatically.</p>
         <div id="nclist"></div>
-        <datalist id="dl_companies"></datalist>
-        <datalist id="dl_sites"></datalist>
       </div>
     </div>
   </div>
@@ -181,16 +199,15 @@ __THEME__
 <script>
 __THEME_JS__
 
-// ---- Sequential single-hue ramp (blue), light→bright over the dark stage.
-// Magnitude = crop count per cell. Stops chosen for monotonic lightness so it
-// reads as one ordered scale (not a rainbow).
+// ---- Thermal ramp: green (sparse) → yellow → orange → red (dense), over the
+// dark stage. Magnitude = crop count per cell.
 const RAMP = [
   [13, 17, 23],      // 0 — the stage (empty cell)
-  [30, 58, 95],      // deep blue
-  [37, 99, 235],     // accent blue
-  [110, 168, 254],   // light blue
-  [169, 204, 255],   // bright
-  [224, 238, 255],   // peak
+  [21, 93, 48],      // deep green
+  [34, 197, 94],     // green
+  [234, 179, 8],     // yellow
+  [249, 115, 22],    // orange
+  [239, 68, 68],     // red — peak
 ];
 function rampColor(t){                       // t in [0,1]
   t = Math.max(0, Math.min(1, t));
@@ -213,27 +230,84 @@ const $ = (id) => document.getElementById(id);
 let CAMERAS = [];          // [{company, site, camera}]
 let current = null;        // last grid payload
 
-function opt(value, label){ const o = document.createElement('option'); o.value = value; o.textContent = label; return o; }
+// ---- Searchable dropdowns: click to open, type to filter, ↑/↓ + Enter to
+// pick, Esc to close. The input's dataset.v holds the committed selection and
+// input.value always mirrors it outside of active typing, so the rest of the
+// page can keep reading $(id).value like it did with the old <select>s.
+function makeCombo(id, allLabel){
+  const input = $(id), box = input.parentElement, list = box.querySelector('.combo-list');
+  let options = [], visible = [], hl = 0;
+  input.dataset.v = '';
+  const open = () => { box.classList.add('open'); render(''); };
+  const close = () => { box.classList.remove('open'); };
+  function commit(v){
+    input.dataset.v = v; input.value = v; close();
+    input.dispatchEvent(new Event('change'));
+  }
+  function render(q){
+    q = q.trim().toLowerCase();
+    visible = [''].concat(options.filter(o => !q || o.toLowerCase().includes(q)));
+    hl = q && visible.length > 1 ? 1 : 0;   // typing pre-highlights the best match
+    list.innerHTML = '';
+    visible.forEach((o, i) => {
+      const d = document.createElement('div');
+      d.className = 'op' + (o ? '' : ' all') + (i === hl ? ' hl' : '');
+      d.textContent = o || allLabel;
+      d.addEventListener('mousedown', e => { e.preventDefault(); commit(o); });
+      list.appendChild(d);
+    });
+    if (q && visible.length === 1){
+      const d = document.createElement('div'); d.className = 'none';
+      d.textContent = 'No matches'; list.appendChild(d);
+    }
+  }
+  input.addEventListener('focus', () => { input.select(); open(); });
+  input.addEventListener('input', () => { box.classList.add('open'); render(input.value); });
+  input.addEventListener('blur', () => { input.value = input.dataset.v; close(); });
+  input.addEventListener('keydown', (e) => {
+    if (!box.classList.contains('open')) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp'){
+      e.preventDefault();
+      hl = Math.max(0, Math.min(visible.length - 1, hl + (e.key === 'ArrowDown' ? 1 : -1)));
+      [...list.querySelectorAll('.op')].forEach((d, i) => {
+        d.classList.toggle('hl', i === hl);
+        if (i === hl) d.scrollIntoView({block: 'nearest'});
+      });
+    } else if (e.key === 'Enter'){
+      e.preventDefault(); commit(visible[hl] ?? '');
+    } else if (e.key === 'Escape'){
+      input.value = input.dataset.v; close(); input.blur();
+    }
+  });
+  return {
+    set(opts){
+      options = opts;
+      if (input.dataset.v && !opts.includes(input.dataset.v)){ input.dataset.v = ''; input.value = ''; }
+    },
+    reset(){ input.dataset.v = ''; input.value = ''; },
+    set disabled(d){ input.disabled = d; },
+  };
+}
+const combos = {
+  company: makeCombo('f_company', 'All companies'),
+  site:    makeCombo('f_site', 'All sites'),
+  camera:  makeCombo('f_camera', 'All cameras'),
+  cls:     makeCombo('f_class', 'All classes'),
+};
 
 function fillCompanies(){
-  const sel = $('f_company'); sel.innerHTML = '';
-  sel.appendChild(opt('', 'All companies'));
-  [...new Set(CAMERAS.map(c => c.company))].sort().forEach(c => sel.appendChild(opt(c, c)));
+  combos.company.set([...new Set(CAMERAS.map(c => c.company))].sort());
 }
 function fillSites(){
   const company = $('f_company').value;
-  const sel = $('f_site'); sel.innerHTML = ''; sel.appendChild(opt('', 'All sites'));
-  const sites = [...new Set(CAMERAS.filter(c => !company || c.company === company).map(c => c.site))].sort();
-  sites.forEach(s => sel.appendChild(opt(s, s)));
-  sel.disabled = !company;
+  combos.site.set([...new Set(CAMERAS.filter(c => !company || c.company === company).map(c => c.site))].sort());
+  combos.site.disabled = !company;
 }
 function fillCameras(){
   const company = $('f_company').value, site = $('f_site').value;
-  const sel = $('f_camera'); sel.innerHTML = ''; sel.appendChild(opt('', 'All cameras'));
-  const cams = CAMERAS.filter(c => (!company || c.company === company) && (!site || c.site === site))
-                      .map(c => c.camera).sort();
-  cams.forEach(c => sel.appendChild(opt(c, c)));
-  sel.disabled = !company;
+  combos.camera.set([...new Set(CAMERAS.filter(c => (!company || c.company === company) && (!site || c.site === site))
+                      .map(c => c.camera))].sort());
+  combos.camera.disabled = !company;
 }
 
 async function loadMeta(){
@@ -244,8 +318,7 @@ async function loadMeta(){
     ]);
     CAMERAS = cam.cameras || [];
     fillCompanies(); fillSites(); fillCameras();
-    const csel = $('f_class'); csel.innerHTML = ''; csel.appendChild(opt('', 'All classes'));
-    (cls.classes || []).forEach(c => csel.appendChild(opt(c, c)));
+    combos.cls.set(cls.classes || []);
   } catch(e){ /* offline — leave filters empty */ }
 }
 
@@ -257,6 +330,22 @@ function currentFilters(){
   return p;
 }
 
+// Camera-scene backgrounds: Image cache by URL; null = known-broken link.
+const THUMBS = {};
+function thumbUrl(camera){
+  const rec = CAMERAS.find(c => c.camera === camera && c.thumbnail);
+  return rec ? rec.thumbnail : null;
+}
+function loadThumb(url){
+  return new Promise((resolve) => {
+    if (url in THUMBS) return resolve(THUMBS[url]);
+    const img = new Image();
+    img.onload = () => { THUMBS[url] = img; resolve(img); };
+    img.onerror = () => { THUMBS[url] = null; resolve(null); }; // broken link → plain map
+    img.src = url;
+  });
+}
+
 async function draw(){
   $('empty').textContent = 'Loading…'; $('empty').style.display = 'flex';
   let data;
@@ -266,18 +355,50 @@ async function draw(){
   $('count').innerHTML = '<b>' + (data.count || 0).toLocaleString() + '</b> crops';
   $('tickmax').textContent = data.max || 0;
 
+  // With one camera selected, its scene image sits under the density cells.
+  const camUrl = thumbUrl($('f_camera').value);
+  const bg = camUrl ? await loadThumb(camUrl) : null;
+
   const canvas = $('hm'), ctx = canvas.getContext('2d');
   const cols = data.cols, rows = data.rows;
-  // Render at grid resolution; CSS scales it up crisply.
-  canvas.width = cols; canvas.height = rows;
-  ctx.clearRect(0, 0, cols, rows);
+  // Plain map renders at grid resolution (CSS scales it up crisply); with a
+  // background image, render larger so the scene stays recognisable.
+  const S = bg ? 24 : 1;
+  canvas.width = cols * S; canvas.height = rows * S;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (bg) ctx.drawImage(bg, 0, 0, canvas.width, canvas.height);
   if (!data.count){
     $('empty').innerHTML = 'No crops match these filters yet.<br>Run inference on a camera video to populate the map.';
     $('empty').style.display = 'flex';
-    ctx.fillStyle = 'rgb(13,17,23)'; ctx.fillRect(0,0,cols,rows);
+    if (!bg){ ctx.fillStyle = 'rgb(13,17,23)'; ctx.fillRect(0,0,canvas.width,canvas.height); }
     return;
   }
   $('empty').style.display = 'none';
+  if (bg){
+    // Smooth overlay: paint the grid at 1px-per-cell offscreen, then scale it
+    // up with bilinear smoothing + a soft blur so density reads as gradient
+    // blobs over the scene, not hard-edged boxes.
+    const off = document.createElement('canvas');
+    off.width = cols; off.height = rows;
+    const img = off.getContext('2d').createImageData(cols, rows);
+    for (let y = 0; y < rows; y++){
+      for (let x = 0; x < cols; x++){
+        const n = data.cells[y][x];
+        if (!n) continue;                     // empty cell: fully transparent
+        const c = ramp(n, data.max);
+        const i = (y * cols + x) * 4;
+        img.data[i] = c[0]; img.data[i+1] = c[1]; img.data[i+2] = c[2];
+        const op = Number($('op').value) / 100;          // overlay scrubber
+        img.data[i+3] = Math.round(op * (.58 + .42 * Math.sqrt(n / data.max)) * 255);
+      }
+    }
+    off.getContext('2d').putImageData(img, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.filter = `blur(${S / 2}px)`;
+    ctx.drawImage(off, 0, 0, canvas.width, canvas.height);
+    ctx.filter = 'none';
+    return;
+  }
   for (let y = 0; y < rows; y++){
     for (let x = 0; x < cols; x++){
       const c = ramp(data.cells[y][x], data.max);
@@ -309,8 +430,11 @@ $('f_camera').addEventListener('change', draw);
 $('f_class').addEventListener('change', draw);
 $('res').addEventListener('input', () => { $('resval').textContent = $('res').value; });
 $('res').addEventListener('change', draw);
+$('op').addEventListener('input', () => { $('opval').textContent = $('op').value + '%'; });
+$('op').addEventListener('change', draw);
 $('reset').addEventListener('click', () => {
-  $('f_company').value = ''; fillSites(); fillCameras(); $('f_class').value = ''; draw();
+  combos.company.reset(); combos.camera.reset(); combos.site.reset(); combos.cls.reset();
+  fillSites(); fillCameras(); draw();
 });
 
 // ---- "New cameras" detection + prompt ----
@@ -323,11 +447,45 @@ async function loadUnknown(){
   badge.textContent = '⚠ ' + n + ' new camera' + (n === 1 ? '' : 's');
   return n;
 }
+// Free-text combo for the modal: suggestions filter as you type, but any typed
+// value is kept (registering may create a brand-new company or site).
+function freeCombo(input, optionsFn){
+  const box = input.parentElement, list = box.querySelector('.combo-list');
+  let visible = [], hl = -1;
+  function render(){
+    const q = input.value.trim().toLowerCase();
+    visible = optionsFn().filter(o => !q || o.toLowerCase().includes(q));
+    hl = visible.length ? 0 : -1;
+    list.innerHTML = '';
+    visible.forEach((o, i) => {
+      const d = document.createElement('div');
+      d.className = 'op' + (i === hl ? ' hl' : '');
+      d.textContent = o;
+      d.addEventListener('mousedown', e => {
+        e.preventDefault(); input.value = o; box.classList.remove('open');
+        input.dispatchEvent(new Event('change'));
+      });
+      list.appendChild(d);
+    });
+    box.classList.toggle('open', visible.length > 0);
+  }
+  input.addEventListener('focus', render);
+  input.addEventListener('input', render);
+  input.addEventListener('blur', () => box.classList.remove('open'));
+  input.addEventListener('keydown', (e) => {
+    if (!box.classList.contains('open')) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp'){
+      e.preventDefault();
+      hl = Math.max(0, Math.min(visible.length - 1, hl + (e.key === 'ArrowDown' ? 1 : -1)));
+      [...list.children].forEach((d, i) => { d.classList.toggle('hl', i === hl); if (i === hl) d.scrollIntoView({block:'nearest'}); });
+    } else if (e.key === 'Enter'){
+      e.preventDefault();
+      if (hl >= 0){ input.value = visible[hl]; box.classList.remove('open'); input.dispatchEvent(new Event('change')); }
+    } else if (e.key === 'Escape'){ box.classList.remove('open'); }
+  });
+}
+
 function renderUnknownModal(){
-  const comps = [...new Set(CAMERAS.map(c => c.company))].sort();
-  const sites = [...new Set(CAMERAS.map(c => c.site))].sort();
-  $('dl_companies').innerHTML = comps.map(c => `<option value="${c.replace(/"/g,'&quot;')}">`).join('');
-  $('dl_sites').innerHTML = sites.map(s => `<option value="${s.replace(/"/g,'&quot;')}">`).join('');
   const list = $('nclist'); list.innerHTML = '';
   if (!UNKNOWN.length){ list.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">No new cameras right now.</p>'; return; }
   UNKNOWN.forEach((u) => {
@@ -337,14 +495,27 @@ function renderUnknownModal(){
       '<div class="name">' + esc(u.camera) + '</div>' +
       '<div class="meta">' + u.count + ' crop' + (u.count===1?'':'s') + ' · e.g. ' + esc(u.sampleVideo) + '</div>' +
       '<div class="inputs">' +
-        '<div class="field-lil"><label>Company</label><input list="dl_companies" placeholder="Company" data-k="company"></div>' +
-        '<div class="field-lil"><label>Site</label><input list="dl_sites" placeholder="Site" data-k="site"></div>' +
+        '<div class="field-lil"><label>Company</label><div class="combo"><input placeholder="Company" data-k="company" autocomplete="off" spellcheck="false"><div class="combo-list"></div></div></div>' +
+        '<div class="field-lil"><label>Site</label><div class="combo"><input placeholder="Site" data-k="site" autocomplete="off" spellcheck="false"><div class="combo-list"></div></div></div>' +
+        '<div class="field-lil"><label>Camera name</label><input data-k="camera" autocomplete="off" spellcheck="false" title="Rename the camera, or leave as detected"></div>' +
         '<button class="addbtn">Add</button>' +
       '</div>' +
       '<div class="donemsg"></div>';
-    const comp = row.querySelector('[data-k=company]'), st = row.querySelector('[data-k=site]'), btn = row.querySelector('.addbtn');
+    const comp = row.querySelector('[data-k=company]'), st = row.querySelector('[data-k=site]'),
+          cam = row.querySelector('[data-k=camera]'), btn = row.querySelector('.addbtn');
+    cam.value = u.camera;   // save-as-is default: the name detected from the video
+    freeCombo(comp, () => [...new Set(CAMERAS.map(c => c.company))].sort());
+    freeCombo(st, () => {
+      // Only the chosen company's sites; everything while company is new/blank.
+      const rel = CAMERAS.filter(c => c.company === comp.value.trim());
+      return [...new Set((rel.length ? rel : CAMERAS).map(c => c.site))].sort();
+    });
+    comp.addEventListener('change', () => {
+      const rel = new Set(CAMERAS.filter(c => c.company === comp.value.trim()).map(c => c.site));
+      if (rel.size && st.value && !rel.has(st.value)) st.value = '';   // stale site from another company
+    });
     btn.addEventListener('click', async () => {
-      const company = comp.value.trim(), site = st.value.trim();
+      const company = comp.value.trim(), site = st.value.trim(), camera = cam.value.trim() || u.camera;
       comp.style.borderColor = company ? '' : 'var(--danger)';
       st.style.borderColor = site ? '' : 'var(--danger)';
       if (!company || !site) return;
@@ -352,11 +523,11 @@ function renderUnknownModal(){
       try {
         const res = await fetch('/api/heatmap/register', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ company, site, camera: u.camera }),
+          body: JSON.stringify({ company, site, camera, alias: u.camera }),
         }).then(r => r.json());
         if (res.ok){
           row.classList.add('done');
-          row.querySelector('.donemsg').textContent = '✓ Added to ' + company + ' / ' + site + ' — ' + res.tagged + ' crop' + (res.tagged===1?'':'s') + ' tagged.';
+          row.querySelector('.donemsg').textContent = '✓ Added ' + camera + ' to ' + company + ' / ' + site + ' — ' + res.tagged + ' crop' + (res.tagged===1?'':'s') + ' tagged.';
           await loadMeta(); await loadUnknown(); await draw();
         } else { btn.disabled = false; btn.textContent = 'Retry'; }
       } catch(e){ btn.disabled = false; btn.textContent = 'Retry'; }

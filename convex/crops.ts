@@ -148,6 +148,32 @@ export const unknownCameras = query({
   },
 });
 
+// Delete every untagged crop grouped under one guessed camera name — i.e. the
+// rows behind a single "new camera detected" entry — plus any annotations
+// linked to those crops. Used to discard junk/test uploads instead of
+// registering them.
+export const deleteUnknownCamera = mutation({
+  args: { secret: v.string(), camera: v.string() },
+  handler: async (ctx, { secret, camera }) => {
+    assertSecret(secret);
+    const rows = await ctx.db.query("crops").collect();
+    const doomed = rows.filter((r) => !r.camera && guessCameraName(r.video) === camera);
+    const filenames = new Set(doomed.map((r) => r.filename));
+    for (const r of doomed) await ctx.db.delete(r._id);
+    let annotations = 0;
+    if (filenames.size) {
+      const anns = await ctx.db.query("annotations").collect();
+      for (const a of anns) {
+        if ((a.crop && filenames.has(a.crop)) || filenames.has(a.image)) {
+          await ctx.db.delete(a._id);
+          annotations++;
+        }
+      }
+    }
+    return { crops: doomed.length, annotations };
+  },
+});
+
 // The distinct videos that have crops, with a count each — handy for a picker.
 export const videos = query({
   args: {},

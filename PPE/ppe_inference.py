@@ -20,9 +20,7 @@ from ultralytics import YOLO
 
 # Repo root on the path so this stays runnable standalone (python3 PPE/ppe_inference.py).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import cropnames
-import db_log
-import paths
+from core import cropnames, db_log, paths
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Weights come from the suite-wide model pool, shared with every other tool.

@@ -21,6 +21,11 @@ export default defineSchema({
     company: v.string(),
     site: v.string(),
     camera: v.string(),
+    thumbnail: v.optional(v.string()), // hosted image URL of the camera's scene
+    // Video-name prefix this camera matches when the user renamed it at
+    // registration (e.g. camera "Yard East" with alias "Mayfield" still tags
+    // videos named Mayfield_*). Absent when the camera name IS the prefix.
+    alias: v.optional(v.string()),
   })
     .index("by_company", ["company"])
     .index("by_company_site", ["company", "site"])

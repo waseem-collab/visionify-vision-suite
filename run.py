@@ -35,11 +35,7 @@ from flask import Flask, Response, redirect, request
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
 from werkzeug.serving import run_simple
 
-import auth
-import convex_client
-import paths
-import ports
-import theme
+from core import auth, convex_client, paths, ports, theme
 
 paths.ensure_dirs()
 
@@ -183,7 +179,7 @@ def convex_status():
         return {"configured": False, "url": "", "reachable": False, "authed": False,
                 "detail": "CONVEX_URL not set in .env"}
     ok, detail = convex_client.ping()
-    import db_log
+    from core import db_log
     return {"configured": True, "url": url, "reachable": ok,
             "authed": bool(convex_client.auth_token()),
             "logging": db_log.stats(), "detail": detail}
@@ -264,16 +260,20 @@ def heatmap_register():
     company = str(payload.get("company", "")).strip()
     site = str(payload.get("site", "")).strip()
     camera = str(payload.get("camera", "")).strip()
+    alias = str(payload.get("alias", "")).strip()
     if not (company and site and camera):
         return {"ok": False, "error": "company, site and camera are all required"}, 400
     try:
-        res = client.mutation("cameras:register", {
+        args = {
             "secret": convex_client.shared_secret(),
             "company": company, "site": site, "camera": camera,
-        })
+        }
+        if alias and alias != camera:
+            args["alias"] = alias  # renamed at registration — keep matching its videos
+        res = client.mutation("cameras:register", args)
     except Exception as exc:
         return {"ok": False, "error": str(exc)}, 502
-    import cameras as _cams
+    from core import cameras as _cams
     _cams.refresh()  # so newly-arriving crops from this camera auto-tag
     return {"ok": True, "tagged": (res or {}).get("tagged", 0)}
 
@@ -281,7 +281,7 @@ def heatmap_register():
 @shell.post("/api/heatmap/import")
 def heatmap_import_start():
     """Start importing a folder of YOLO label files into the database."""
-    import label_import
+    from core import label_import
     path = str((request.get_json(silent=True) or {}).get("path", "")).strip()
     if not path:
         return {"ok": False, "error": "A folder path is required."}, 400
@@ -293,7 +293,7 @@ def heatmap_import_start():
 
 @shell.get("/api/heatmap/import/status")
 def heatmap_import_status():
-    import label_import
+    from core import label_import
     return label_import.status()
 
 

@@ -15,9 +15,7 @@ import os
 import threading
 import time
 
-import cameras
-import convex_client
-import cropnames
+from core import cameras, convex_client, cropnames
 
 _BATCH = 100  # rows per bulk mutation — keeps each Convex transaction small
 

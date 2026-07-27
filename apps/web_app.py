@@ -20,13 +20,10 @@ from urllib.parse import urlparse
 # Repo root on the path so this module can be imported directly as well as via
 # the suite launcher (python3 apps/web_app.py still works).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import cropnames
-import db_log
-import paths
-import ports
+from core import cropnames, db_log, paths, ports
 # Imported under an alias: `theme` is already a local variable name inside the
 # page renderer, and shadowing the module there would be a nasty surprise.
-import theme as suite_theme
+from core import theme as suite_theme
 
 paths.ensure_dirs()
 
@@ -1523,6 +1520,13 @@ body{margin:0;overflow:hidden;}
 .t-btn{width:auto;min-width:74px;height:40px;padding:0 14px;font-family:var(--sans);font-size:12.5px;color:var(--text);cursor:pointer;background:var(--panel-2);border:1px solid var(--line-2);border-radius:9px;display:inline-flex;align-items:center;justify-content:center;gap:6px;transition:border-color .14s,background .14s,transform .05s;}
 .t-btn:hover{border-color:var(--hivis);background:var(--panel-3);}
 .t-btn:active{transform:translateY(1px);}
+.frame-jump{display:inline-flex;align-items:center;gap:6px;margin-left:6px;}
+.frame-jump label{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);}
+.frame-jump input{width:84px;height:40px;padding:0 10px;font-family:var(--mono,monospace);font-size:13px;text-align:center;
+  color:var(--text);background:var(--panel-2);border:1px solid var(--line-2);border-radius:9px;
+  transition:border-color .14s,box-shadow .14s;appearance:textfield;-moz-appearance:textfield;}
+.frame-jump input::-webkit-outer-spin-button,.frame-jump input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
+.frame-jump input:focus{outline:none;border-color:var(--hivis);}
 .play-btn{width:56px;min-width:56px;height:56px;flex:0 0 auto;padding:0;border:none;border-radius:50%;color:var(--ok-fg);cursor:pointer;background:radial-gradient(120% 120% at 30% 25%, var(--go), var(--go-deep));box-shadow:0 6px 20px var(--ok-soft),inset 0 1px 0 var(--border-2);display:inline-flex;align-items:center;justify-content:center;transition:transform .1s,box-shadow .18s,background .2s,filter .12s;}
 .play-btn:hover{filter:brightness(1.06);transform:translateY(-1px);}
 .play-btn:active{transform:translateY(0);}
@@ -1779,6 +1783,10 @@ input[type=checkbox]{width:17px;height:17px;accent-color:var(--hivis);cursor:poi
             </div>
             <button class="t-btn" onclick="seekBy(1,'frame')" title="Next frame (Right arrow)">Frame ›</button>
             <button class="t-btn" onclick="seekBy(5,'sec')" title="Forward 5 seconds">5s »</button>
+            <span class="frame-jump" title="Type a frame number and press Enter to jump there">
+              <label for="frame_jump">Frame</label>
+              <input id="frame_jump" type="number" min="0" step="1" placeholder="#" inputmode="numeric" />
+            </span>
           </div>
           <div class="seek-row">
             <span class="time-readout" id="time_cur">0:00</span>
@@ -2048,6 +2056,19 @@ __THEME_JS__
     const value = Number(document.getElementById("seek_slider").value);
     await fetch("/api/seek", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "absolute", frame: value }) });
   }
+  // Frame-number jump box: type a frame, Enter seeks straight to it.
+  document.getElementById("frame_jump").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const el = e.target;
+    let frame = Math.floor(Number(el.value));
+    if (!isFinite(frame) || el.value.trim() === "") return;
+    const max = Number(document.getElementById("seek_slider").max) || 0;
+    frame = Math.max(0, Math.min(frame, max));
+    fetch("/api/seek", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "absolute", frame }) }).catch(() => {});
+    el.value = "";
+    el.blur();
+  });
 
   const ICON_PLAY = '<svg viewBox="0 0 24 24" width="22" height="22"><path d="M8 5.5v13a1 1 0 0 0 1.54.84l10-6.5a1 1 0 0 0 0-1.68l-10-6.5A1 1 0 0 0 8 5.5z" fill="currentColor"/></svg>';
   const ICON_PAUSE = '<svg viewBox="0 0 24 24" width="22" height="22"><rect x="6.5" y="5" width="4" height="14" rx="1.2" fill="currentColor"/><rect x="13.5" y="5" width="4" height="14" rx="1.2" fill="currentColor"/></svg>';

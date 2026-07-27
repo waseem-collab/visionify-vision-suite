@@ -49,10 +49,18 @@ python3 apps/crop_balancer_app.py
 
 ```
 run.py                  entry point — mounts the three apps on one port
-paths.py                every directory and state file, in one place
-ports.py                picks a free port instead of failing on a busy one
-theme.py                the design system: palette, chrome, theme toggle
-templates/landing.html  the app picker at /
+wsgi.py                 WSGI entrypoint (gunicorn etc.) — serves the same app
+
+core/                   shared modules
+  paths.py              every directory and state file, in one place
+  ports.py              picks a free port instead of failing on a busy one
+  theme.py              the design system: palette, chrome, theme toggle
+  auth.py               the login gate (admin-set passwords per user)
+  convex_client.py      connection to the Convex deployment (.env-driven)
+  db_log.py             best-effort crop/annotation logging to Convex
+  cameras.py            resolves a video name to its camera (registry cache)
+  cropnames.py          the crop filename scheme, parse + build
+  label_import.py       bulk-import a labels folder into the database
 
 apps/
   annotation_app.py     Annotation Studio      (mounted at /annotate)
@@ -61,15 +69,19 @@ apps/
 
 PPE/ppe_inference.py    PPE detection helpers used by the web app
 SM/sm_cropper.py        SM cropper helpers used by the web app
+templates/              landing page, login, heatmap, admin
+convex/                 Convex functions + schema (crops, annotations, cameras)
 
 models/                 shared model pool — every tool lists from here
   _uploaded/            models dropped into the validation UI land here
 sample_dataset/         16 images + labels, so the editor opens with something
-imports/                CVAT tasks, unpacked
-validation/             ground truth pulled from CVAT for validate/compare
-crops/ exports/         inference web app output
-person_crops/ crop_reports/ disagreement_frames/   crop tools output
-.state/                 caches, run history, remembered session (gitignored)
+data/                   ALL generated output (gitignored):
+  imports/              CVAT tasks, unpacked
+  validation/           ground truth pulled from CVAT for validate/compare
+  crops/ exports/       inference web app output
+  person_crops/ crop_reports/ disagreement_frames/   crop tools output
+seed/                   local seed CSVs for the camera registry (gitignored)
+.state/                 settings, caches, run history, sessions (gitignored)
 ```
 
 ### How the three apps share one port
@@ -123,8 +135,8 @@ all gitignored, all safe to delete (the apps recreate them with defaults).
 
 ## Adding a feature
 
-- **A new colour or a restyle** → `theme.py`.
-- **A new directory or state file** → declare it in `paths.py`, then use it.
+- **A new colour or a restyle** → `core/theme.py`.
+- **A new directory or state file** → declare it in `core/paths.py`, then use it.
 - **A new tool** → add `apps/your_app.py` exposing a Flask `app`, mount it in
   `run.py`'s `build_application()`, and add a card to `templates/landing.html`.
 - **Inside an existing tool** → the app modules are self-contained; edit in place.

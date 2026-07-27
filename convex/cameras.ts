@@ -13,6 +13,7 @@ export const seed = mutation({
         company: v.string(),
         site: v.string(),
         camera: v.string(),
+        thumbnail: v.optional(v.string()),
       })
     ),
   },
@@ -34,25 +35,54 @@ export const register = mutation({
     company: v.string(),
     site: v.string(),
     camera: v.string(),
+    // The name guessed from the video, when the user renamed the camera —
+    // stored as the alias so this camera keeps matching those videos.
+    alias: v.optional(v.string()),
   },
-  handler: async (ctx, { secret, company, site, camera }) => {
+  handler: async (ctx, { secret, company, site, camera, alias }) => {
     assertSecret(secret);
+    const match = alias && alias !== camera ? alias : undefined;
     const existing = await ctx.db
       .query("cameras")
       .withIndex("by_camera", (q) => q.eq("camera", camera))
       .unique();
-    if (!existing) await ctx.db.insert("cameras", { company, site, camera });
+    if (!existing)
+      await ctx.db.insert("cameras", { company, site, camera, ...(match ? { alias: match } : {}) });
     // Tag every untagged crop whose video maps to this camera.
     const rows = await ctx.db.query("crops").collect();
     let tagged = 0;
     for (const r of rows) {
       if (r.camera) continue;
-      if (guessCameraName(r.video) === camera) {
+      if (guessCameraName(r.video) === (match || camera)) {
         await ctx.db.patch(r._id, { company, site, camera });
         tagged++;
       }
     }
     return { tagged };
+  },
+});
+
+// Attach thumbnail URLs to registry rows, matched by camera name. Only patches
+// cameras that exist; returns the names it couldn't find so a typo is visible.
+export const setThumbnails = mutation({
+  args: {
+    secret: v.string(),
+    items: v.array(v.object({ camera: v.string(), thumbnail: v.string() })),
+  },
+  handler: async (ctx, { secret, items }) => {
+    assertSecret(secret);
+    let updated = 0;
+    const missing: string[] = [];
+    for (const it of items) {
+      const rows = await ctx.db
+        .query("cameras")
+        .withIndex("by_camera", (q) => q.eq("camera", it.camera))
+        .collect();
+      if (!rows.length) { missing.push(it.camera); continue; }
+      for (const row of rows) await ctx.db.patch(row._id, { thumbnail: it.thumbnail });
+      updated += rows.length;
+    }
+    return { updated, missing };
   },
 });
 
@@ -63,7 +93,7 @@ export const all = query({
   handler: async (ctx) => {
     const rows = await ctx.db.query("cameras").collect();
     return rows
-      .map((r) => ({ company: r.company, site: r.site, camera: r.camera }))
+      .map((r) => ({ company: r.company, site: r.site, camera: r.camera, thumbnail: r.thumbnail, alias: r.alias }))
       .sort(
         (a, b) =>
           a.company.localeCompare(b.company) ||

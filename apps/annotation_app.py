@@ -44,11 +44,7 @@ from flask import Flask, jsonify, redirect, request, send_file, Response
 # Repo root on the path so this module can be imported directly as well as via
 # the suite launcher (python3 apps/annotation_app.py still works).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import cropnames
-import db_log
-import paths
-import ports
-import theme
+from core import cropnames, db_log, paths, ports, theme
 
 paths.ensure_dirs()
 

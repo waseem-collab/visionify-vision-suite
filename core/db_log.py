@@ -24,8 +24,8 @@ import sys
 import threading
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import convex_client
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from core import convex_client
 
 # Bounded so a Convex outage can never grow memory without limit — old events are
 # dropped once it fills (best-effort, not a durable log).
@@ -60,7 +60,7 @@ def _ensure_worker():
 
 def _run():
     global _sent, _failed
-    import cameras
+    from core import cameras
     client = convex_client.get_client()
     if client is None:
         return

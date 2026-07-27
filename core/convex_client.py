@@ -14,7 +14,7 @@ Configure it in .env:
 
 Then, once you have Convex functions deployed:
 
-    from convex_client import get_client
+    from core.convex_client import get_client
     client = get_client()
     result = client.query("yourModule:yourFunction", {"arg": 1})
 """
@@ -24,7 +24,7 @@ import threading
 from pathlib import Path
 from urllib.parse import urlparse
 
-_ROOT = Path(__file__).resolve().parent
+_ROOT = Path(__file__).resolve().parent.parent  # repo root (this file lives in core/)
 _client = None
 _lock = threading.Lock()
 _env_mtime = None
