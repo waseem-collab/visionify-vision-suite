@@ -23,7 +23,7 @@ _lock = threading.Lock()
 _state = {
     "running": False, "done": False, "error": "",
     "total": 0, "processed": 0, "crops": 0, "annotations": 0,
-    "path": "", "message": "",
+    "path": "", "message": "", "project": "", "task": "",
 }
 
 
@@ -49,13 +49,14 @@ def _find_labels_dir(path):
 
 
 def _read_class_names(labels_dir, dataset_dir):
-    """Class names (index = class id) from labels.txt / classes.txt, searched in
-    the labels folder, the dataset root, then its parent."""
+    """Class names (index = class id) from labels.txt / classes.txt (or a CVAT
+    YOLO export's obj.names), searched in the labels folder, the dataset root,
+    then its parent."""
     seen = []
     for d in (labels_dir, dataset_dir, os.path.dirname(labels_dir)):
         if not d:
             continue
-        for fname in ("labels.txt", "classes.txt"):
+        for fname in ("labels.txt", "classes.txt", "obj.names"):
             p = os.path.join(d, fname)
             if os.path.isfile(p):
                 try:
@@ -100,7 +101,7 @@ def _flush(client, secret, crop_batch, ann_batch):
     return c, a
 
 
-def _run(path):
+def _run(path, project, task):
     client = convex_client.get_client()
     secret = convex_client.shared_secret()
     if client is None or not secret:
@@ -135,6 +136,10 @@ def _run(path):
 
         image = stem + ".jpg"  # crops are saved as .jpg; this is the join key
         ann = {"image": image, "boxes": boxes, "savedAt": now}
+        if project:
+            ann["project"] = project
+        if task:
+            ann["task"] = task
 
         # If the name is one of our crops, recover the crop's frame position +
         # camera so the heatmap has a point to plot for these classes.
@@ -151,6 +156,10 @@ def _run(path):
             }
             if camera:
                 crop["company"], crop["site"], crop["camera"] = company, site, camera
+            if project:
+                crop["project"] = project
+            if task:
+                crop["task"] = task
             crop_batch.append(crop)
 
         ann_batch.append(ann)
@@ -179,13 +188,16 @@ def _run(path):
          message=f"Imported {sent_a} annotations ({sent_c} with crop positions) from {len(files)} files.")
 
 
-def start(path):
-    """Kick off an import. Returns an error string, or None if it started."""
+def start(path, project="", task=""):
+    """Kick off an import. Returns an error string, or None if it started.
+    ``project``/``task`` are the CVAT names the imported rows get stamped
+    with, so the heatmap can filter by them."""
     with _lock:
         if _state["running"]:
             return "An import is already running."
         _state.update({"running": True, "done": False, "error": "", "total": 0,
                        "processed": 0, "crops": 0, "annotations": 0,
-                       "path": str(path), "message": "Starting…"})
-    threading.Thread(target=_run, args=(path,), daemon=True).start()
+                       "path": str(path), "message": "Starting…",
+                       "project": str(project), "task": str(task)})
+    threading.Thread(target=_run, args=(path, str(project), str(task)), daemon=True).start()
     return None

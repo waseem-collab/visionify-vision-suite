@@ -339,29 +339,39 @@ def api_save(idx):
     data = request.get_json(force=True)
     boxes = data.get("boxes", [])
     write_label(IMAGES[idx], boxes)
-    _log_annotation(IMAGES[idx], boxes)
+    # Saving locally does NOT log to Convex — the database updates only when
+    # this data is uploaded to CVAT (see _log_cvat_upload).
     return jsonify({"ok": True, "saved": IMAGES[idx], "n": len(boxes)})
 
 
-def _log_annotation(img_name, boxes):
-    """Best-effort: mirror a saved annotation to Convex (never blocks/raises).
-
-    When the image is a crop we produced, its name links back to the source
-    crop, video and frame — the chain the heatmap follows."""
-    enriched = []
-    for b in boxes:
-        row = dict(b)
-        cls = int(b.get("cls", 0))
-        if 0 <= cls < len(CLASSES):
-            row["className"] = CLASSES[cls]
-        enriched.append(row)
-    link = cropnames.parse_crop_name(img_name)
-    db_log.record_annotation(
-        img_name, enriched,
-        crop=img_name if link else None,
-        video=link["video"] if link else None,
-        frame=link["frame"] if link else None,
-    )
+def _log_cvat_upload(images, lbl_dir, classes, task_name, project_name):
+    """Best-effort: mirror everything just uploaded to CVAT into Convex
+    (never blocks/raises). This is the ONLY path that logs annotations — a
+    local save writes files but nothing reaches the database until the data
+    is uploaded to CVAT, stamped with its task and project so the heatmap
+    can filter by them."""
+    for img_name in images:
+        try:
+            boxes = _read_label_file(os.path.join(lbl_dir, os.path.splitext(img_name)[0] + ".txt"))
+        except Exception:
+            continue
+        if not boxes:
+            continue  # nothing annotated on this image
+        enriched = []
+        for b in boxes:
+            row = dict(b)
+            cls = int(b.get("cls", 0))
+            if 0 <= cls < len(classes):
+                row["className"] = classes[cls]
+            enriched.append(row)
+        link = cropnames.parse_crop_name(img_name)
+        db_log.record_annotation(
+            img_name, enriched,
+            crop=img_name if link else None,
+            video=link["video"] if link else None,
+            frame=link["frame"] if link else None,
+            task=task_name, project=project_name,
+        )
 
 
 @app.route("/api/delete/<int:idx>", methods=["POST"])
@@ -580,6 +590,14 @@ def _do_cvat_upload(project_id, task_name, task_id, frames, subset,
                 task = client.tasks.retrieve(int(task_id))
                 task.remove_annotations()                 # clean replace
                 _cvat_import_annotations(client, int(task_id), zip_path)
+                tname = getattr(task, "name", "") or f"task-{task_id}"
+                try:
+                    pname = client.projects.retrieve(task.project_id).name
+                except Exception:
+                    pname = ""
+            # Uploaded to CVAT — NOW the data enters the database, stamped
+            # with its task/project.
+            _log_cvat_upload(sorted(remaining), lbl_dir, classes, tname, pname)
             msg = f"updated task {task_id} ✓"
             if ndel:
                 msg += f" ({ndel} frame(s) deleted)"
@@ -609,6 +627,14 @@ def _do_cvat_upload(project_id, task_name, task_id, frames, subset,
         with _cvat_client() as client:
             task = client.tasks.create_from_data(**kwargs)
             tid = task.id
+            try:
+                pname = client.projects.retrieve(int(project_id)).name
+            except Exception:
+                pname = ""
+        # Uploaded to CVAT — NOW the data enters the database, stamped with
+        # its task/project.
+        if classes:
+            _log_cvat_upload(list(images), lbl_dir, classes, task_name, pname)
         _set_job(state="done", running=False, task_id=tid,
                  task_url=f"{CVAT_URL}/tasks/{tid}",
                  message=f"uploaded as task {tid} ✓")
@@ -626,7 +652,13 @@ def _do_cvat_upload(project_id, task_name, task_id, frames, subset,
 # Cached project/task lists (persisted to disk so they survive restarts; the UI
 # has Refresh buttons to re-fetch when CVAT changes).
 _CVAT_CACHE_FILE = str(paths.CVAT_CACHE_FILE)
-_cvat_cache = {"projects": None, "tasks": {}}
+# Lists go stale silently (a task created elsewhere never appears), so cache
+# entries carry a fetched-at stamp and expire after CVAT_CACHE_TTL seconds —
+# every consumer (studio pickers, heatmap filters, import modal) then sees new
+# projects/tasks within a minute, no manual Refresh needed. On a CVAT error the
+# stale copy still serves as the offline fallback.
+CVAT_CACHE_TTL = 60
+_cvat_cache = {"projects": None, "tasks": {}, "projects_at": 0, "tasks_at": {}}
 _cvat_cache_lock = threading.Lock()
 
 
@@ -636,7 +668,9 @@ def _load_cvat_cache():
         with open(_CVAT_CACHE_FILE, encoding="utf-8") as fh:
             d = json.load(fh)
         if isinstance(d, dict):
-            _cvat_cache = {"projects": d.get("projects"), "tasks": d.get("tasks") or {}}
+            _cvat_cache = {"projects": d.get("projects"), "tasks": d.get("tasks") or {},
+                           "projects_at": d.get("projects_at") or 0,
+                           "tasks_at": d.get("tasks_at") or {}}
     except (OSError, ValueError):
         pass
 
@@ -655,10 +689,12 @@ _load_cvat_cache()
 @app.route("/api/cvat/projects")
 def api_cvat_projects():
     """List CVAT projects (id + name). Served from cache unless ?refresh=1."""
+    import time as _time
     refresh = request.args.get("refresh") == "1"
     with _cvat_cache_lock:
         cached = _cvat_cache.get("projects")
-    if not refresh and cached is not None:
+        fresh = cached is not None and _time.time() - _cvat_cache.get("projects_at", 0) < CVAT_CACHE_TTL
+    if not refresh and fresh:
         return jsonify({"projects": cached, "org": CVAT_ORG, "url": CVAT_URL, "cached": True})
     try:
         with _cvat_client() as client:
@@ -666,6 +702,7 @@ def api_cvat_projects():
         projects.sort(key=lambda p: p["id"], reverse=True)   # newest first
         with _cvat_cache_lock:
             _cvat_cache["projects"] = projects
+            _cvat_cache["projects_at"] = _time.time()
             _save_cvat_cache()
         return jsonify({"projects": projects, "org": CVAT_ORG, "url": CVAT_URL})
     except Exception as e:
@@ -810,17 +847,20 @@ def api_cvat_tasks():
     pid = request.args.get("project_id")
     if not pid:
         return jsonify({"error": "no project id"}), 400
+    import time as _time
     refresh = request.args.get("refresh") == "1"
     key = str(pid)
     with _cvat_cache_lock:
         cached = _cvat_cache["tasks"].get(key)
-    if not refresh and cached is not None:
+        fresh = cached is not None and _time.time() - _cvat_cache["tasks_at"].get(key, 0) < CVAT_CACHE_TTL
+    if not refresh and fresh:
         return jsonify({"tasks": _annotate_imports(cached), "cached": True})
     try:
         tasks = _cvat_list_tasks(pid)
         tasks.sort(key=lambda t: t["id"], reverse=True)   # newest first
         with _cvat_cache_lock:
             _cvat_cache["tasks"][key] = tasks
+            _cvat_cache["tasks_at"][key] = _time.time()
             _save_cvat_cache()
         return jsonify({"tasks": _annotate_imports(tasks)})
     except Exception as e:
@@ -3286,7 +3326,7 @@ __THEME_TOKENS__
 <div id="home">
   <div class="home-corner">
     <a class="suite-btn" href="/home" title="Back to the suite"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5"/><path d="M9.5 21v-6h5v6"/></svg>Suite</a>
-    <button class="theme-btn home-theme" onclick="toggleTheme()" title="toggle theme"></button>
+    <button class="theme-btn home-theme" onclick="toggleTheme(event)" title="toggle theme"></button>
   </div>
   <div class="home-inner">
     <svg class="home-logo" viewBox="0 0 64 64"><defs><linearGradient id="alg2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6ea8fe"/><stop offset="1" stop-color="#3b82f6"/></linearGradient></defs><rect width="64" height="64" rx="15" fill="url(#alg2)"/><g stroke="#0a0a0a" stroke-width="3.4" stroke-linecap="round" fill="none" opacity=".88"><path d="M16 25v-7a2 2 0 0 1 2-2h7"/><path d="M48 25v-7a2 2 0 0 0-2-2h-7"/><path d="M16 39v7a2 2 0 0 0 2 2h7"/><path d="M48 39v7a2 2 0 0 1-2 2h-7"/></g><circle cx="32" cy="32" r="4.6" fill="#0a0a0a"/></svg>
@@ -3351,7 +3391,7 @@ __THEME_TOKENS__
   <input id="jump" type="number" min="1" placeholder="#"
          onkeydown="if(event.key==='Enter')jump()">
   <button onclick="jump()">Go</button>
-  <button class="theme-btn" onclick="toggleTheme()" title="toggle theme"></button>
+  <button class="theme-btn" onclick="toggleTheme(event)" title="toggle theme"></button>
 </div>
 <div id="meta">
   <span id="name"></span>
@@ -3938,11 +3978,27 @@ function updateThemeIcons(){
     b.title = dark?'switch to light mode':'switch to dark mode';
   });
 }
-function toggleTheme(){
+function toggleTheme(e){
   const next = currentTheme()==='light' ? 'dark' : 'light';
-  document.documentElement.setAttribute('data-theme', next);
-  try{ localStorage.setItem('theme', next); }catch(e){}   // remember the last choice
-  updateThemeIcons();
+  const apply = () => {
+    document.documentElement.setAttribute('data-theme', next);
+    try{ localStorage.setItem('theme', next); }catch(err){}   // remember the last choice
+    updateThemeIcons();
+  };
+  // Circle reveal growing out of the clicked button (View Transitions API);
+  // browsers without it just switch instantly. Same as core/theme.py THEME_JS.
+  if (!document.startViewTransition){ apply(); return; }
+  const btn = e && e.currentTarget instanceof Element ? e.currentTarget : null;
+  const b = btn ? btn.getBoundingClientRect() : null;
+  const x = b ? b.left + b.width/2 : innerWidth/2;
+  const y = b ? b.top + b.height/2 : innerHeight/2;
+  const r = Math.hypot(Math.max(x, innerWidth-x), Math.max(y, innerHeight-y));
+  document.startViewTransition(apply).ready.then(() => {
+    document.documentElement.animate(
+      { clipPath: ['circle(0px at '+x+'px '+y+'px)', 'circle('+r+'px at '+x+'px '+y+'px)'] },
+      { duration: 480, easing: 'cubic-bezier(.2,0,.2,1)', pseudoElement: '::view-transition-new(root)' }
+    );
+  }).catch(()=>{});
 }
 // ---- minimized jobs: several can be collapsed at once, stacked bottom-right ----
 const JOB_DEF={

@@ -20,6 +20,8 @@ export const record = mutation({
     company: v.optional(v.string()),
     site: v.optional(v.string()),
     camera: v.optional(v.string()),
+    project: v.optional(v.string()),
+    task: v.optional(v.string()),
     savedAt: v.number(),
   },
   handler: async (ctx, args) => {
@@ -66,6 +68,8 @@ export const bulkRecord = mutation({
         company: v.optional(v.string()),
         site: v.optional(v.string()),
         camera: v.optional(v.string()),
+        project: v.optional(v.string()),
+        task: v.optional(v.string()),
         savedAt: v.number(),
       })
     ),
@@ -103,8 +107,10 @@ export const heatmap = query({
     site: v.optional(v.string()),
     camera: v.optional(v.string()),
     className: v.optional(v.string()),
+    project: v.optional(v.string()),
+    task: v.optional(v.string()),
   },
-  handler: async (ctx, { company, site, camera, className }) => {
+  handler: async (ctx, { company, site, camera, className, project, task }) => {
     let rows = camera
       ? await ctx.db
           .query("crops")
@@ -113,6 +119,8 @@ export const heatmap = query({
       : await ctx.db.query("crops").collect();
     if (company) rows = rows.filter((r) => r.company === company);
     if (site) rows = rows.filter((r) => r.site === site);
+    if (project) rows = rows.filter((r) => r.project === project);
+    if (task) rows = rows.filter((r) => r.task === task);
     if (className) {
       const anns = await ctx.db.query("annotations").collect();
       const withClass = new Set(
@@ -247,6 +255,72 @@ export const deleteUnknownCamera = mutation({
       }
     }
     return { crops: doomed.length, annotations };
+  },
+});
+
+// Mirror-delete for a CVAT re-sync: rows stamped with this project/task whose
+// image is no longer part of the task's export get removed from both tables —
+// so deleting an annotation in CVAT deletes it here on the next sync.
+export const pruneCvatTask = mutation({
+  args: {
+    secret: v.string(),
+    project: v.string(),
+    task: v.string(),
+    keep: v.array(v.string()), // image filenames still present in the export
+  },
+  handler: async (ctx, { secret, project, task, keep }) => {
+    assertSecret(secret);
+    const keepSet = new Set(keep);
+    let crops = 0;
+    for (const r of await ctx.db.query("crops").collect()) {
+      if (r.project === project && r.task === task && !keepSet.has(r.filename)) {
+        await ctx.db.delete(r._id);
+        crops++;
+      }
+    }
+    let annotations = 0;
+    for (const a of await ctx.db.query("annotations").collect()) {
+      if (a.project === project && a.task === task && !keepSet.has(a.image)) {
+        await ctx.db.delete(a._id);
+        annotations++;
+      }
+    }
+    return { crops, annotations };
+  },
+});
+
+// Distinct cameras among the crops of one CVAT project/task — powers the
+// related-cameras dropdown in the heatmap's CVAT filter mode.
+export const camerasFor = query({
+  args: { project: v.optional(v.string()), task: v.optional(v.string()) },
+  handler: async (ctx, { project, task }) => {
+    const rows = await ctx.db.query("crops").collect();
+    const out = new Set<string>();
+    for (const r of rows) {
+      if (project && r.project !== project) continue;
+      if (task && r.task !== task) continue;
+      if (r.camera) out.add(r.camera);
+    }
+    return [...out].sort();
+  },
+});
+
+// The distinct CVAT (project, task) pairs seen across crops — populates the
+// heatmap's project/task filters (task options cascade from the project).
+export const taskProjects = query({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("crops").collect();
+    const seen = new Set<string>();
+    const pairs: { project: string; task: string }[] = [];
+    for (const r of rows) {
+      if (!r.project && !r.task) continue;
+      const key = `${r.project ?? ""}\u0000${r.task ?? ""}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      pairs.push({ project: r.project ?? "", task: r.task ?? "" });
+    }
+    return pairs.sort((a, b) => a.project.localeCompare(b.project) || a.task.localeCompare(b.task));
   },
 });
 

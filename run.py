@@ -206,11 +206,55 @@ def heatmap_cameras():
         return {"cameras": [], "error": str(exc)}
 
 
+@shell.get("/api/heatmap/taskprojects")
+def heatmap_taskprojects():
+    """Distinct CVAT (project, task) pairs seen across crops — the heatmap's
+    project/task filter options."""
+    try:
+        return {"pairs": _convex_query("crops:taskProjects", {}) or []}
+    except Exception as exc:
+        return {"pairs": [], "error": str(exc)}
+
+
+@shell.post("/api/heatmap/cvat/sync")
+def heatmap_cvat_sync():
+    """Pull annotations for the given CVAT tasks into the database."""
+    from core import cvat_sync
+    payload = request.get_json(silent=True) or {}
+    project = str(payload.get("project", "")).strip()
+    tasks = payload.get("tasks")
+    if not project or not isinstance(tasks, list):
+        return {"ok": False, "error": "project and tasks are required"}, 400
+    err = cvat_sync.start(project, tasks)
+    if err:
+        return {"ok": False, "error": err}, 409
+    return {"ok": True, "count": len(tasks)}
+
+
+@shell.get("/api/heatmap/cvat/sync/status")
+def heatmap_cvat_sync_status():
+    from core import cvat_sync
+    return cvat_sync.status()
+
+
+@shell.get("/api/heatmap/cvat/cameras")
+def heatmap_cvat_cameras():
+    """Cameras actually present in the crops of a CVAT project/task."""
+    args = {k: request.args[k] for k in ("project", "task") if request.args.get(k)}
+    try:
+        return {"cameras": _convex_query("crops:camerasFor", args) or []}
+    except Exception as exc:
+        return {"cameras": [], "error": str(exc)}
+
+
 @shell.get("/api/heatmap/classes")
 def heatmap_classes():
-    """Distinct annotation class labels, for the class filter."""
+    """Class labels present in the annotations matching the given filters —
+    the dropdown only offers what's actually available."""
+    args = {k: request.args[k] for k in ("company", "site", "camera", "project", "task")
+            if request.args.get(k)}
     try:
-        return {"classes": _convex_query("annotations:classes", {}) or []}
+        return {"classes": _convex_query("annotations:classesFor", args) or []}
     except Exception as exc:
         return {"classes": [], "error": str(exc)}
 
@@ -219,7 +263,8 @@ def heatmap_classes():
 def heatmap_data():
     """Bin the filtered crops into a density grid (16:9). Returns the grid of
     counts, its max, and the total point count."""
-    filters = {k: request.args[k] for k in ("company", "site", "camera", "className")
+    filters = {k: request.args[k] for k in ("company", "site", "camera", "className",
+                                            "project", "task")
                if request.args.get(k)}
     cols = max(8, min(int(request.args.get("cols", 40)), 80))
     rows = max(5, round(cols * 9 / 16))
@@ -282,10 +327,15 @@ def heatmap_register():
 def heatmap_import_start():
     """Start importing a folder of YOLO label files into the database."""
     from core import label_import
-    path = str((request.get_json(silent=True) or {}).get("path", "")).strip()
+    payload = request.get_json(silent=True) or {}
+    path = str(payload.get("path", "")).strip()
+    project = str(payload.get("project", "")).strip()
+    task = str(payload.get("task", "")).strip()
     if not path:
         return {"ok": False, "error": "A folder path is required."}, 400
-    err = label_import.start(path)
+    if not (project and task):
+        return {"ok": False, "error": "Select the CVAT project and task this data belongs to."}, 400
+    err = label_import.start(path, project, task)
     if err:
         return {"ok": False, "error": err}, 409
     return {"ok": True}

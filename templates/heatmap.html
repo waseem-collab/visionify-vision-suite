@@ -19,7 +19,19 @@ __THEME__
   .sub{color:var(--text-muted);margin:0 0 22px;font-size:13.5px;}
 
   /* Filters — one row above the chart (dataviz: filters in one row). */
-  .filters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:8px;}
+  .modebar{display:flex;align-items:center;gap:12px;margin-bottom:12px;}
+  .mseg-wrap{display:inline-flex;border:1px solid var(--border-2);border-radius:var(--r);overflow:hidden;}
+  .mseg{padding:9px 16px;font-size:12.5px;font-weight:600;color:var(--text-muted);background:none;border:none;cursor:pointer;
+    transition:background .14s,color .14s;}
+  .mseg.active{background:var(--accent);color:var(--accent-fg);}
+  .mseg:not(.active):hover{color:var(--text);}
+  .modehint{font-size:12px;color:var(--text-muted);}
+  .filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:8px;}
+  .field[hidden]{display:none;}
+  .filterbtn{height:38px;padding:0 20px;font-weight:600;font-size:13px;color:var(--accent-fg);background:var(--accent);
+    border:none;border-radius:var(--r);cursor:pointer;transition:filter .14s;}
+  .filterbtn:hover{filter:brightness(1.08);}
+  .filterbtn:disabled{opacity:.55;cursor:default;}
   .field{display:flex;flex-direction:column;gap:5px;min-width:0;}
   .field label{font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--text-muted);font-weight:600;}
   .field select,.combo input{width:100%;height:38px;padding:8px 30px 8px 11px;font-size:13px;color:var(--text);
@@ -77,7 +89,8 @@ __THEME__
   .ticks{display:flex;flex-direction:column;justify-content:space-between;font-family:var(--mono);
     font-size:11px;color:var(--text-muted);margin-left:7px;}
   .legend-row{display:flex;align-items:stretch;gap:0;height:100%;}
-  @media (max-width:720px){ .filters{grid-template-columns:1fr 1fr;} }
+  @media (max-width:900px){ .filters{grid-template-columns:1fr 1fr 1fr;} }
+  @media (max-width:640px){ .filters{grid-template-columns:1fr 1fr;} }
 
   /* "New cameras" prompt */
   .newcam-badge{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--warn);
@@ -114,6 +127,7 @@ __THEME__
   .ncform .addbtn:hover{background:var(--accent-hover);}
   .ncform .addbtn:disabled{opacity:.55;cursor:default;}
   .modal-b code{font-family:var(--mono);font-size:11.5px;background:var(--surface-2);padding:1px 5px;border-radius:4px;}
+  .imp-selects{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;}
   .imp-row{display:flex;gap:8px;}
   .imp-row input{flex:1;min-width:0;height:38px;padding:8px 11px;font-size:12.5px;font-family:var(--mono);color:var(--text);
     background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);}
@@ -138,15 +152,27 @@ __THEME__
     <h1>Detection Heatmap</h1>
     <p class="sub">Where people appear across a camera's frames. Pick a company, site and camera — and optionally a class — to filter.</p>
 
+    <div class="modebar">
+      <div class="mseg-wrap">
+        <button type="button" class="mseg active" id="mode_cam">Companies &amp; sites</button>
+        <button type="button" class="mseg" id="mode_cvat">CVAT projects &amp; tasks</button>
+      </div>
+      <span class="modehint" id="modehint">Filtering by camera location</span>
+    </div>
     <div class="filters">
-      <div class="field"><label for="f_company">Company</label>
+      <div class="field fm-cam"><label for="f_company">Company</label>
         <div class="combo"><input id="f_company" autocomplete="off" spellcheck="false" placeholder="All companies"><div class="combo-list"></div></div></div>
-      <div class="field"><label for="f_site">Site</label>
+      <div class="field fm-cam"><label for="f_site">Site</label>
         <div class="combo"><input id="f_site" autocomplete="off" spellcheck="false" placeholder="All sites" disabled><div class="combo-list"></div></div></div>
+      <div class="field fm-cvat" hidden><label for="f_project">Project</label>
+        <div class="combo"><input id="f_project" autocomplete="off" spellcheck="false" placeholder="All projects"><div class="combo-list"></div></div></div>
+      <div class="field fm-cvat" hidden><label for="f_task">Task</label>
+        <div class="combo"><input id="f_task" autocomplete="off" spellcheck="false" placeholder="All tasks"><div class="combo-list"></div></div></div>
       <div class="field"><label for="f_camera">Camera</label>
         <div class="combo"><input id="f_camera" autocomplete="off" spellcheck="false" placeholder="All cameras" disabled><div class="combo-list"></div></div></div>
       <div class="field"><label for="f_class">Class</label>
         <div class="combo"><input id="f_class" autocomplete="off" spellcheck="false" placeholder="All classes"><div class="combo-list"></div></div></div>
+      <div class="field"><label>&nbsp;</label><button type="button" class="filterbtn" id="apply_btn">Filter</button></div>
     </div>
 
     <div class="toolbar">
@@ -179,7 +205,11 @@ __THEME__
     <div class="modal">
       <div class="modal-h"><h3>Import annotations</h3><button class="x" id="imp_close" title="Close">×</button></div>
       <div class="modal-b">
-        <p>Point at a dataset folder (or a bare <code>labels/</code> folder) of YOLO <code>.txt</code> files. Every annotation is read into the database. Where a file is named with the crop scheme (<code>&lt;video&gt;_&lt;frame&gt;_&lt;coords&gt;</code>), its position and camera fill in too, so it lands on the heatmap. Class names come from the folder's <code>labels.txt</code>.</p>
+        <p>Point at a dataset folder (or a bare <code>labels/</code> folder) of YOLO <code>.txt</code> files, and pick the CVAT project and task this data belongs to — every imported row is stamped with them so the heatmap can filter by project/task. Where a file is named with the crop scheme (<code>&lt;video&gt;_&lt;frame&gt;_&lt;coords&gt;</code>), its position and camera fill in too. Class names come from the folder's <code>labels.txt</code>.</p>
+        <div class="imp-selects">
+          <div class="field-lil"><label>CVAT project</label><div class="combo"><input id="imp_project" placeholder="Loading projects…" autocomplete="off" spellcheck="false"><div class="combo-list"></div></div></div>
+          <div class="field-lil"><label>CVAT task</label><div class="combo"><input id="imp_task" placeholder="Pick a project first" autocomplete="off" spellcheck="false" disabled><div class="combo-list"></div></div></div>
+        </div>
         <div class="imp-row">
           <input id="imp_path" placeholder="/path/to/dataset   or   /path/to/labels" spellcheck="false" />
           <button class="addbtn" id="imp_go">Import</button>
@@ -233,7 +263,8 @@ function ramp(count, max){ return rampColor(max > 0 ? Math.sqrt(count / max) : 0
 })();
 
 const $ = (id) => document.getElementById(id);
-let CAMERAS = [];          // [{company, site, camera}]
+const norm2 = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+let CAMERAS = [];          // [{company, site, camera, alias, aliases, thumbnail}]
 let current = null;        // last grid payload
 
 // ---- Searchable dropdowns: click to open, type to filter, ↑/↓ + Enter to
@@ -302,7 +333,68 @@ const combos = {
   site:    makeCombo('f_site', 'All sites'),
   camera:  makeCombo('f_camera', 'All cameras'),
   cls:     makeCombo('f_class', 'All classes'),
+  project: makeCombo('f_project', 'All projects'),
+  task:    makeCombo('f_task', 'All tasks'),
 };
+let TASKPROJECTS = [];    // [{project, task}] pairs seen across crops
+
+// Project/task options come from CVAT itself (all projects, all tasks) with
+// the DB's stamped pairs as an offline fallback. Selecting a project or task
+// pulls its annotations from CVAT into the database, then the map draws.
+let HM_TASKS = [];              // CVAT tasks [{id, name}] of the selected project
+const CVAT_TASK_CACHE = {};     // project id -> its CVAT task list
+const SYNCED = new Set();       // task ids already pulled this session
+
+async function getCvatTasks(projectName){
+  const p = (CVAT_PROJECTS || []).find(x => x.name === projectName);
+  if (!p) return [];
+  // Always ask CVAT for the live list (the server falls back to its cache if
+  // CVAT is unreachable) — otherwise freshly created tasks never appear.
+  try {
+    const j = await fetch('/annotate/api/cvat/tasks?project_id=' + encodeURIComponent(p.id)).then(r => r.json());
+    CVAT_TASK_CACHE[p.id] = j.tasks || [];
+  } catch(e){ if (!CVAT_TASK_CACHE[p.id]) CVAT_TASK_CACHE[p.id] = []; }
+  return CVAT_TASK_CACHE[p.id];
+}
+
+// CVAT lists arrive newest-first (descending id) — keep that order. Names only
+// known to the DB (CVAT unreachable / deleted tasks) trail at the end.
+function fillProjects(){
+  const cvat = (CVAT_PROJECTS || []).map(p => p.name);
+  const db = TASKPROJECTS.map(p => p.project)
+    .filter(n => n && !cvat.includes(n)).sort((a, b) => a.localeCompare(b));
+  combos.project.set([...new Set([...cvat, ...db])]);
+}
+function fillTasks(){
+  const proj = $('f_project').value;
+  const cvat = HM_TASKS.map(t => t.name);
+  const db = TASKPROJECTS.filter(p => !proj || p.project === proj).map(p => p.task)
+    .filter(n => n && !cvat.includes(n)).sort((a, b) => a.localeCompare(b));
+  combos.task.set([...new Set([...cvat, ...db])]);
+}
+
+async function syncFromCvat(tasks){
+  const todo = tasks.filter(t => t.id && !SYNCED.has(t.id));
+  if (!todo.length) return;
+  const pill = $('count');
+  try {
+    const res = await fetch('/api/heatmap/cvat/sync', { method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ project: $('f_project').value.trim(),
+                             tasks: todo.map(t => ({ id: t.id, name: t.name })) }),
+    }).then(r => r.json());
+    if (!res.ok){ pill.textContent = res.error || 'CVAT sync failed'; return; }
+  } catch(e){ pill.textContent = 'CVAT sync unreachable'; return; }
+  while (true){
+    let s;
+    try { s = await fetch('/api/heatmap/cvat/sync/status').then(r => r.json()); }
+    catch(e){ break; }
+    if (s.message) pill.textContent = s.message;
+    if (s.done || !s.running) break;
+    await new Promise(r => setTimeout(r, 700));
+  }
+  todo.forEach(t => SYNCED.add(t.id));
+}
 
 function fillCompanies(){
   combos.company.set([...new Set(CAMERAS.map(c => c.company))].sort((a, b) => a.localeCompare(b)));
@@ -312,7 +404,64 @@ function fillSites(){
   combos.site.set([...new Set(CAMERAS.filter(c => !company || c.company === company).map(c => c.site))].sort((a, b) => a.localeCompare(b)));
   combos.site.disabled = !company;
 }
+// Cameras related to the current CVAT selection: a camera is "related" when
+// any of its names (registry name, alias, merged aliases) appears inside the
+// selected task's name (or any task of the selected project) — task names
+// carry the camera/video name. Falls back to all cameras when nothing matches.
+function camerasForCvat(){
+  const all = [...new Set(CAMERAS.map(c => c.camera))];
+  const tname = $('f_task').value.trim();
+  const taskNames = tname ? [tname] : HM_TASKS.map(x => x.name);
+  if (!taskNames.length) return all;
+  const rel = new Set();
+  for (const c of CAMERAS){
+    // Only names long enough to be meaningful — a camera called "K1" must not
+    // "match" a task named gsbpl_task17.
+    const names = [c.camera, c.alias, ...(c.aliases || [])].filter(n => n && norm2(n).length >= 5);
+    if (taskNames.some(tn => names.some(n => norm2(tn).includes(norm2(n))))) rel.add(c.camera);
+  }
+  return rel.size ? [...rel] : all;
+}
+
+// The authoritative list: cameras actually present in the synced crops of the
+// selected project/task. Name inference is only the pre-sync fallback.
+async function updateCvatCameras(){
+  if (FMODE !== 'cvat') return;
+  const project = $('f_project').value.trim(), task = $('f_task').value.trim();
+  let rel = [];
+  if (project || task){
+    try {
+      const q = new URLSearchParams();
+      if (project) q.set('project', project);
+      if (task) q.set('task', task);
+      rel = (await fetch('/api/heatmap/cvat/cameras?' + q).then(r => r.json())).cameras || [];
+    } catch(e){}
+  }
+  if (!rel.length) rel = camerasForCvat();
+  combos.camera.set(rel.sort((a, b) => a.localeCompare(b)));
+  combos.camera.disabled = false;
+}
+
+// Class options follow the current selection — only classes that exist in
+// the matching data are offered.
+async function updateClasses(){
+  const q = new URLSearchParams();
+  const map = FMODE === 'cvat'
+    ? { f_project: 'project', f_task: 'task', f_camera: 'camera' }
+    : { f_company: 'company', f_site: 'site', f_camera: 'camera' };
+  for (const [id, k] of Object.entries(map)){ const v = $(id).value; if (v) q.set(k, v); }
+  try {
+    const j = await fetch('/api/heatmap/classes?' + q).then(r => r.json());
+    combos.cls.set(j.classes || []);
+  } catch(e){ /* offline — keep the current list */ }
+}
+
 function fillCameras(){
+  if (FMODE === 'cvat'){
+    combos.camera.set(camerasForCvat().sort((a, b) => a.localeCompare(b)));
+    combos.camera.disabled = false;
+    return;
+  }
   const company = $('f_company').value, site = $('f_site').value;
   combos.camera.set([...new Set(CAMERAS.filter(c => (!company || c.company === company) && (!site || c.site === site))
                       .map(c => c.camera))].sort((a, b) => a.localeCompare(b)));
@@ -321,19 +470,25 @@ function fillCameras(){
 
 async function loadMeta(){
   try {
-    const [cam, cls] = await Promise.all([
+    const [cam, cls, tp] = await Promise.all([
       fetch('/api/heatmap/cameras').then(r => r.json()),
       fetch('/api/heatmap/classes').then(r => r.json()),
+      fetch('/api/heatmap/taskprojects').then(r => r.json()),
     ]);
     CAMERAS = cam.cameras || [];
-    fillCompanies(); fillSites(); fillCameras();
+    TASKPROJECTS = tp.pairs || [];
+    await loadCvatProjects();
+    fillCompanies(); fillSites(); fillCameras(); fillProjects(); fillTasks();
     combos.cls.set(cls.classes || []);
   } catch(e){ /* offline — leave filters empty */ }
 }
 
 function currentFilters(){
   const p = new URLSearchParams();
-  const map = { f_company: 'company', f_site: 'site', f_camera: 'camera', f_class: 'className' };
+  // Two mutually-exclusive filter modes: camera location OR CVAT provenance.
+  const map = FMODE === 'cvat'
+    ? { f_project: 'project', f_task: 'task', f_camera: 'camera', f_class: 'className' }
+    : { f_company: 'company', f_site: 'site', f_camera: 'camera', f_class: 'className' };
   for (const [id, key] of Object.entries(map)){ const v = $(id).value; if (v) p.set(key, v); }
   p.set('cols', $('res').value);
   return p;
@@ -433,17 +588,63 @@ canvas.addEventListener('mousemove', (e) => {
 canvas.addEventListener('mouseleave', () => { tip.style.opacity = 0; });
 
 // wire filters
-$('f_company').addEventListener('change', () => { fillSites(); fillCameras(); draw(); });
-$('f_site').addEventListener('change', () => { fillCameras(); draw(); });
-$('f_camera').addEventListener('change', draw);
-$('f_class').addEventListener('change', draw);
+// ---- Filter modes: by camera location OR by CVAT project/task, never both.
+let FMODE = 'cam';
+function setMode(m){
+  FMODE = m;
+  $('mode_cam').classList.toggle('active', m === 'cam');
+  $('mode_cvat').classList.toggle('active', m === 'cvat');
+  document.querySelectorAll('.fm-cam').forEach(d => { d.hidden = m !== 'cam'; });
+  document.querySelectorAll('.fm-cvat').forEach(d => { d.hidden = m !== 'cvat'; });
+  $('modehint').textContent = m === 'cvat'
+    ? 'Filtering by CVAT — picking a project/task pulls its annotations on Filter'
+    : 'Filtering by camera location';
+  if (m === 'cam' && !$('f_company').value) combos.camera.reset();  // cascade rule again
+  fillCameras();
+  updateClasses();
+}
+$('mode_cam').addEventListener('click', () => setMode('cam'));
+$('mode_cvat').addEventListener('click', () => setMode('cvat'));
+
+// Dropdown changes only maintain the cascades — the map doesn't move until
+// the Filter button is clicked.
+$('f_company').addEventListener('change', () => { fillSites(); fillCameras(); updateClasses(); });
+$('f_site').addEventListener('change', () => { fillCameras(); updateClasses(); });
+$('f_camera').addEventListener('change', () => updateClasses());
+$('f_project').addEventListener('change', async () => {
+  const proj = $('f_project').value.trim();
+  HM_TASKS = proj ? await getCvatTasks(proj) : [];
+  fillTasks(); updateCvatCameras(); updateClasses();
+});
+$('f_task').addEventListener('change', () => { updateCvatCameras(); updateClasses(); });
+
+async function applyFilters(){
+  const btn = $('apply_btn');
+  btn.disabled = true;
+  try {
+    if (FMODE === 'cvat'){
+      const proj = $('f_project').value.trim();
+      if (proj){
+        const tname = $('f_task').value.trim();
+        const sel = tname ? HM_TASKS.filter(x => x.name === tname) : HM_TASKS;
+        if (sel.length) await syncFromCvat(sel);   // pull from CVAT, then draw
+        await updateCvatCameras();                 // now the data knows its cameras
+        await updateClasses();
+      }
+    }
+    await draw();
+  } finally { btn.disabled = false; }
+}
+$('apply_btn').addEventListener('click', applyFilters);
 $('res').addEventListener('input', () => { $('resval').textContent = $('res').value; });
 $('res').addEventListener('change', draw);
 $('op').addEventListener('input', () => { $('opval').textContent = $('op').value + '%'; });
 $('op').addEventListener('change', draw);
 $('reset').addEventListener('click', () => {
   combos.company.reset(); combos.camera.reset(); combos.site.reset(); combos.cls.reset();
-  fillSites(); fillCameras(); draw();
+  combos.project.reset(); combos.task.reset(); HM_TASKS = [];
+  setMode('cam');
+  fillSites(); fillCameras(); fillTasks(); draw();
 });
 
 // ---- "New cameras" detection + prompt ----
@@ -592,19 +793,51 @@ $('ncmodal').addEventListener('click', (e) => { if (e.target === $('ncmodal')) $
 
 // ---- Import a labels folder ----
 let impPoll = null;
+let CVAT_PROJECTS = null;   // [{id, name}] fetched once from the annotation app
+let CVAT_TASKS = [];        // tasks of the selected project
+async function loadCvatProjects(){
+  if (CVAT_PROJECTS !== null) return;
+  try {
+    const j = await fetch('/annotate/api/cvat/projects').then(r => r.json());
+    CVAT_PROJECTS = j.projects || [];
+    $('imp_project').placeholder = CVAT_PROJECTS.length ? 'Select project…' : 'No CVAT projects found';
+  } catch(e){ CVAT_PROJECTS = []; $('imp_project').placeholder = 'CVAT unreachable'; }
+}
+freeCombo($('imp_project'), () => (CVAT_PROJECTS || []).map(p => p.name));
+freeCombo($('imp_task'), () => CVAT_TASKS.map(t => t.name));
+$('imp_project').addEventListener('change', async () => {
+  const p = (CVAT_PROJECTS || []).find(x => x.name === $('imp_project').value.trim());
+  CVAT_TASKS = []; $('imp_task').value = '';
+  $('imp_task').disabled = !p;
+  $('imp_task').placeholder = p ? 'Loading tasks…' : 'Pick a project first';
+  if (p){
+    try {
+      const j = await fetch('/annotate/api/cvat/tasks?project_id=' + encodeURIComponent(p.id)).then(r => r.json());
+      CVAT_TASKS = j.tasks || [];
+      $('imp_task').placeholder = CVAT_TASKS.length ? 'Select task…' : 'No tasks in this project';
+    } catch(e){ $('imp_task').placeholder = 'CVAT unreachable'; }
+  }
+});
 function openImportModal(){
   $('imp_prog').hidden = true; $('imp_msg').textContent = ''; $('imp_msg').className = 'imp-msg';
   $('imp_bar').style.width = '0'; $('imp_go').disabled = false;
-  $('impmodal').classList.add('open'); $('imp_path').focus();
+  $('impmodal').classList.add('open');
+  loadCvatProjects();
+  $('imp_project').focus();
 }
 async function startImport(){
   const path = $('imp_path').value.trim(), msg = $('imp_msg');
+  const project = $('imp_project').value.trim(), task = $('imp_task').value.trim();
   $('imp_prog').hidden = false; msg.className = 'imp-msg';
+  if (!project || !(CVAT_PROJECTS || []).some(p => p.name === project)){
+    msg.textContent = 'Select the CVAT project this data belongs to.'; msg.classList.add('err'); return;
+  }
+  if (!task){ msg.textContent = 'Select the CVAT task this data belongs to.'; msg.classList.add('err'); return; }
   if (!path){ msg.textContent = 'Enter a folder path.'; msg.classList.add('err'); return; }
   $('imp_go').disabled = true; msg.textContent = 'Starting…';
   let res;
   try { res = await fetch('/api/heatmap/import', { method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ path }) }).then(r => r.json()); }
+        body: JSON.stringify({ path, project, task }) }).then(r => r.json()); }
   catch(e){ msg.textContent = 'Could not reach the server.'; msg.classList.add('err'); $('imp_go').disabled = false; return; }
   if (!res.ok){ msg.textContent = res.error || 'Failed to start.'; msg.classList.add('err'); $('imp_go').disabled = false; return; }
   impPoll = setInterval(pollImport, 500);

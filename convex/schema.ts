@@ -51,6 +51,10 @@ export default defineSchema({
     company: v.optional(v.string()),
     site: v.optional(v.string()),
     camera: v.optional(v.string()),
+    // CVAT provenance — stamped when the data is uploaded to CVAT (that upload
+    // is what creates the row). Filterable on the heatmap.
+    project: v.optional(v.string()),
+    task: v.optional(v.string()),
     savedAt: v.number(), //  epoch ms
   })
     .index("by_filename", ["filename"])
@@ -75,6 +79,9 @@ export default defineSchema({
         className: v.optional(v.string()),
       })
     ),
+    // CVAT provenance — which project/task this annotation was uploaded under.
+    project: v.optional(v.string()),
+    task: v.optional(v.string()),
     savedAt: v.number(),
   })
     .index("by_image", ["image"])

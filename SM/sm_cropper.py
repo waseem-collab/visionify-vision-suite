@@ -155,16 +155,21 @@ def open_video(source):
     return cap
 
 
-def draw_detections(frame, model, conf):
+def draw_detections(frame, model, conf, selected_classes=None):
+    """Draw the model's detections. ``selected_classes`` is a list of class
+    names to keep (None = all) — the web app's SM class picker."""
     result = model.predict(frame, conf=conf, verbose=False)[0]
     if result.boxes is None:
         return frame, 0
 
+    keep = None if selected_classes is None else set(selected_classes)
     count = 0
     for box in result.boxes:
         dconf = float(box.conf[0])
         cls_id = int(box.cls[0])
         label = result.names.get(cls_id, str(cls_id))
+        if keep is not None and label not in keep:
+            continue
         x1, y1, x2, y2 = map(int, box.xyxy[0])
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
         cv2.putText(

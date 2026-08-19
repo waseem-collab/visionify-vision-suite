@@ -23,6 +23,8 @@ export const record = mutation({
         className: v.optional(v.string()),
       })
     ),
+    project: v.optional(v.string()),
+    task: v.optional(v.string()),
     savedAt: v.number(),
   },
   handler: async (ctx, args) => {
@@ -61,6 +63,8 @@ export const bulkRecord = mutation({
             className: v.optional(v.string()),
           })
         ),
+        project: v.optional(v.string()),
+        task: v.optional(v.string()),
         savedAt: v.number(),
       })
     ),
@@ -76,6 +80,41 @@ export const bulkRecord = mutation({
       else await ctx.db.insert("annotations", doc);
     }
     return { count: items.length };
+  },
+});
+
+// Class labels present in the annotations matching the given filters — the
+// heatmap's class dropdown only offers what's actually there. company/site/
+// camera scope via the linked crops; project/task via the annotation's stamp.
+export const classesFor = query({
+  args: {
+    company: v.optional(v.string()),
+    site: v.optional(v.string()),
+    camera: v.optional(v.string()),
+    project: v.optional(v.string()),
+    task: v.optional(v.string()),
+  },
+  handler: async (ctx, { company, site, camera, project, task }) => {
+    let anns = await ctx.db.query("annotations").collect();
+    if (project) anns = anns.filter((a) => a.project === project);
+    if (task) anns = anns.filter((a) => a.task === task);
+    if (company || site || camera) {
+      const crops = await ctx.db.query("crops").collect();
+      const ok = new Set(
+        crops
+          .filter((r) =>
+            (!company || r.company === company) &&
+            (!site || r.site === site) &&
+            (!camera || r.camera === camera))
+          .map((r) => r.filename)
+      );
+      anns = anns.filter((a) => ok.has(a.crop || a.image));
+    }
+    const names = new Set<string>();
+    for (const a of anns) {
+      for (const b of a.boxes) if (b.className) names.add(b.className);
+    }
+    return Array.from(names).sort();
   },
 });
 

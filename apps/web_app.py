@@ -108,6 +108,8 @@ state = {
     # Which PPE class names to show as per-person status chips. None = all classes
     # of the selected model. A list means only those classes are shown.
     "ppe_classes": None,
+    # Same idea for the SM (single) model's own classes. None = all.
+    "sm_classes": None,
     "playing": False,
 }
 
@@ -165,7 +167,7 @@ def compute_cfg_key() -> str:
         state["selected_video"], state["person_model_path"], state["ppe_model_path"],
         state["sm_model_path"], state["person_conf"], state["ppe_conf"],
         state["sm_conf"], state["ppe_inside_person"], state["frame_step"],
-        state["ppe_classes"],
+        state["ppe_classes"], state["sm_classes"],
     ))
 
 
@@ -829,8 +831,9 @@ def run_ppe(
     return annotated, person_boxes
 
 
-def run_sm(frame, sm_model, sm_conf):
-    annotated, det_count = sm_cropper.draw_detections(frame, sm_model, sm_conf)
+def run_sm(frame, sm_model, sm_conf, selected_classes=None):
+    annotated, det_count = sm_cropper.draw_detections(frame, sm_model, sm_conf,
+                                                      selected_classes=selected_classes)
     draw_hud(annotated, [f"SM  Detections: {det_count}"], COLOR_SM, align="right")
     return annotated
 
@@ -869,8 +872,8 @@ def build_model_package_options_html(
     return "".join(options)
 
 
-def build_ppe_classes_html(class_names: list[str], selected) -> str:
-    """Checkbox rows for the PPE class picker. selected=None => all checked."""
+def build_ppe_classes_html(class_names: list[str], selected, css_class="ppe-cls") -> str:
+    """Checkbox rows for a model-class picker. selected=None => all checked."""
     sel_set = None if selected is None else set(selected)
     rows = []
     for name in class_names:
@@ -878,7 +881,7 @@ def build_ppe_classes_html(class_names: list[str], selected) -> str:
         safe = html.escape(name)
         value = html.escape(name, quote=True)
         rows.append(
-            f'<label class="cls-row"><input type="checkbox" class="ppe-cls" '
+            f'<label class="cls-row"><input type="checkbox" class="{css_class}" '
             f'value="{value}"{checked} />{safe}</label>'
         )
     return "".join(rows) or '<div class="cls-empty">No classes</div>'
@@ -896,6 +899,9 @@ def snapshot_inference_cfg(frame_idx: int) -> dict:
         "ppe_inside_person": bool(state["ppe_inside_person"]),
         "ppe_classes": (
             list(state["ppe_classes"]) if state["ppe_classes"] is not None else None
+        ),
+        "sm_classes": (
+            list(state["sm_classes"]) if state["sm_classes"] is not None else None
         ),
         "manual_boxes": list(runtime["manual_boxes_by_frame"].get(frame_idx, [])),
     }
@@ -933,7 +939,7 @@ def annotate_frame(frame, cfg: dict):
 
             if cfg["sm_model_path"] != NONE_MODEL_VALUE:
                 sm_model = get_or_load_model(cfg["sm_model_path"])
-                out = run_sm(out, sm_model, cfg["sm_conf"])
+                out = run_sm(out, sm_model, cfg["sm_conf"], cfg["sm_classes"])
                 ran_any = True
 
         if not ran_any:
@@ -1397,6 +1403,8 @@ def _render_inference_page():
         save_settings()
         ppe_model_path = state["ppe_model_path"]
         ppe_selected_classes = state["ppe_classes"]
+        sm_model_path_val = state["sm_model_path"]
+        sm_selected_classes = state["sm_classes"]
         video_folder_val = state["video_folder"]
         selected_video_val = state["selected_video"]
         video_url_val = state["video_url"]
@@ -1412,6 +1420,8 @@ def _render_inference_page():
     # state_lock. Populates the "Classes" picker beside the PPE model dropdown.
     ppe_class_names = get_ppe_class_names(ppe_model_path)
     ppe_classes_html = build_ppe_classes_html(ppe_class_names, ppe_selected_classes)
+    sm_class_names = get_ppe_class_names(sm_model_path_val)
+    sm_classes_html = build_ppe_classes_html(sm_class_names, sm_selected_classes, "sm-cls")
 
     template = """
 <!doctype html>
@@ -1817,6 +1827,14 @@ input[type=checkbox]{width:17px;height:17px;accent-color:var(--hivis);cursor:poi
         </div>
       </div>
 
+      <div class="card" id="sm_classes_card">
+        <div class="card-head"><span class="tick"></span><span class="card-title">SM Classes</span><button type="button" class="card-min" onclick="toggleCard('sm_classes_card')" title="Collapse">–</button></div>
+        <div class="stack">
+          <label class="cls-all-row"><input type="checkbox" id="sm_cls_all" /> All classes</label>
+          <div id="sm_classes_list" class="cls-grid">__SM_CLASSES__</div>
+        </div>
+      </div>
+
       <div class="card" id="source_card">
         <div class="card-head"><span class="tick"></span><span class="card-title">Source &amp; Playback</span><button type="button" class="card-min" onclick="toggleCard('source_card')" title="Collapse">–</button></div>
         <div class="stack">
@@ -1995,6 +2013,7 @@ __THEME_JS__
       simulate_realtime: document.getElementById("simulate_realtime").value === "true",
       ppe_inside_person: document.getElementById("ppe_inside_person").checked,
       ppe_classes: currentPpeClasses(),
+      sm_classes: currentSmClasses(),
     };
   }
 
@@ -2027,6 +2046,46 @@ __THEME_JS__
       const data = await res.json();
       buildClassList(data.classes || [], null);
     } catch (e) { buildClassList([], null); }
+  }
+
+  // ---- SM model class picker (mirror of the PPE one) ----
+  function currentSmClasses() {
+    return Array.from(document.querySelectorAll("#sm_classes_list .sm-cls"))
+      .filter(cb => cb.checked).map(cb => cb.value);
+  }
+  function updateSmAllToggle() {
+    const boxes = Array.from(document.querySelectorAll("#sm_classes_list .sm-cls"));
+    const total = boxes.length, on = boxes.filter(cb => cb.checked).length;
+    const all = document.getElementById("sm_cls_all");
+    all.checked = total > 0 && on === total;
+    all.indeterminate = on > 0 && on < total;
+  }
+  function buildSmClassList(names, selectedSet) {
+    const list = document.getElementById("sm_classes_list");
+    if (!names || names.length === 0) { list.innerHTML = '<div class="cls-empty">No classes</div>'; updateSmAllToggle(); return; }
+    list.innerHTML = names.map(n => {
+      const checked = (selectedSet === null || selectedSet.has(n)) ? " checked" : "";
+      const safe = n.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const val = n.replace(/"/g, "&quot;");
+      return '<label class="cls-row"><input type="checkbox" class="sm-cls" value="' + val + '"' + checked + ' />' + safe + '</label>';
+    }).join("");
+    updateSmAllToggle();
+  }
+  async function reloadSmClasses(modelPath) {
+    try {
+      const res = await fetch("/api/ppe_classes?path=" + encodeURIComponent(modelPath));
+      const data = await res.json();
+      buildSmClassList(data.classes || [], null);
+    } catch (e) { buildSmClassList([], null); }
+  }
+
+  // Class cards only exist while their model is actually selected.
+  function updateClassCardVisibility() {
+    const NONE = "__none__";
+    document.getElementById("classes_card").style.display =
+      document.getElementById("ppe_model_path").value === NONE ? "none" : "";
+    document.getElementById("sm_classes_card").style.display =
+      document.getElementById("sm_model_path").value === NONE ? "none" : "";
   }
 
   async function saveConfig(refreshVideos = false) {
@@ -2524,7 +2583,7 @@ __THEME_JS__
     h.addEventListener("click", () => { const c = h.closest(".card"); if (c && c.id) toggleCard(c.id); });
   });
 
-  const ids = ["person_model_path", "sm_model_path", "video_folder", "selected_video", "video_url", "person_conf", "ppe_conf", "sm_conf", "frame_step", "simulate_realtime", "ppe_inside_person"];
+  const ids = ["person_model_path", "video_folder", "selected_video", "video_url", "person_conf", "ppe_conf", "sm_conf", "frame_step", "simulate_realtime", "ppe_inside_person"];
   ids.forEach((id) => {
     const el = document.getElementById(id);
     const eventName = (id.includes("conf") || id === "frame_step") ? "input" : "change";
@@ -2534,7 +2593,13 @@ __THEME_JS__
   });
 
   document.getElementById("ppe_model_path").addEventListener("change", async (e) => {
+    updateClassCardVisibility();
     await reloadPpeClasses(e.target.value);
+    await saveConfig(false);
+  });
+  document.getElementById("sm_model_path").addEventListener("change", async (e) => {
+    updateClassCardVisibility();
+    await reloadSmClasses(e.target.value);
     await saveConfig(false);
   });
 
@@ -2551,7 +2616,21 @@ __THEME_JS__
     rebuildAiSections();
     await saveConfig(false);
   });
+
+  // SM Classes card wiring (same shape as the PPE one).
+  document.getElementById("sm_cls_all").addEventListener("change", async (e) => {
+    document.querySelectorAll("#sm_classes_list .sm-cls").forEach(cb => { cb.checked = e.target.checked; });
+    updateSmAllToggle();
+    await saveConfig(false);
+  });
+  document.getElementById("sm_classes_list").addEventListener("change", async (e) => {
+    if (!e.target.classList.contains("sm-cls")) return;
+    updateSmAllToggle();
+    await saveConfig(false);
+  });
   updateAllToggle();
+  updateSmAllToggle();
+  updateClassCardVisibility();
   rebuildAiSections();
 
   // Keep the played-fill glued to the slider thumb — from the value, so it moves
@@ -2580,6 +2659,7 @@ __THEME_JS__
         "__PPE_OPTIONS__": ppe_model_options_html,
         "__SM_OPTIONS__": sm_model_options_html,
         "__PPE_CLASSES__": ppe_classes_html,
+        "__SM_CLASSES__": sm_classes_html,
         "__PPE_INSIDE_CHECKED__": "checked" if ppe_inside_val else "",
         "__VIDEO_FOLDER__": html.escape(str(video_folder_val), quote=True),
         "__VIDEO_URL__": html.escape(str(video_url_val), quote=True),
@@ -2634,6 +2714,7 @@ def api_config():
             "simulate_realtime",
             "ppe_inside_person",
             "ppe_classes",
+            "sm_classes",
         ):
             if key in payload:
                 state[key] = payload[key]
@@ -2651,12 +2732,13 @@ def api_config():
             else:
                 state["selected_video"] = ""
 
-        # ppe_classes: None means "all". Otherwise a list of class-name strings.
-        if state["ppe_classes"] is not None:
-            if isinstance(state["ppe_classes"], list):
-                state["ppe_classes"] = [str(c) for c in state["ppe_classes"]]
-            else:
-                state["ppe_classes"] = None
+        # ppe_classes / sm_classes: None means "all"; else class-name strings.
+        for _ck in ("ppe_classes", "sm_classes"):
+            if state[_ck] is not None:
+                if isinstance(state[_ck], list):
+                    state[_ck] = [str(c) for c in state[_ck]]
+                else:
+                    state[_ck] = None
 
         state["person_conf"] = max(0.0, min(1.0, float(state["person_conf"])))
         state["ppe_conf"] = max(0.0, min(1.0, float(state["ppe_conf"])))
@@ -3036,6 +3118,7 @@ def api_options():
                     "simulate_realtime": state["simulate_realtime"],
                     "ppe_inside_person": state["ppe_inside_person"],
                     "ppe_classes": state["ppe_classes"],
+                    "sm_classes": state["sm_classes"],
                     "playing": state["playing"],
                 },
             }

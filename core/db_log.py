@@ -100,9 +100,12 @@ def stats():
             "sent": _sent, "failed": _failed, "dropped": _dropped}
 
 
-def record_annotation(image, boxes, crop=None, video=None, frame=None):
-    """Log one saved annotation. ``boxes`` is a list of dicts with YOLO
-    cls/cx/cy/w/h (and optional className) — the app's own box format."""
+def record_annotation(image, boxes, crop=None, video=None, frame=None,
+                      task=None, project=None):
+    """Log one annotation. ``boxes`` is a list of dicts with YOLO cls/cx/cy/w/h
+    (and optional className) — the app's own box format. ``task``/``project``
+    carry the CVAT provenance: which task and project this data was uploaded
+    under (the upload is what triggers this call)."""
     if not enabled():
         return
     clean_boxes = []
@@ -131,20 +134,29 @@ def record_annotation(image, boxes, crop=None, video=None, frame=None):
         args["video"] = str(video)
     if frame is not None:
         args["frame"] = int(frame)
+    if task:
+        args["task"] = str(task)
+    if project:
+        args["project"] = str(project)
     _enqueue("annotations:record", args)
     # The annotation event is also what puts the image on the heatmap: when the
     # annotated image is one of our crops, upsert its crop row now. Crop SAVES
     # never log — this is the only path that creates crop rows.
     link = cropnames.parse_crop_name(args.get("crop") or args["image"])
     if link:
-        _enqueue("crops:record", {
+        crop_args = {
             "secret": args["secret"],
             "filename": args.get("crop") or args["image"],
             "video": link["video"], "frame": link["frame"],
             "cx": link["cx"], "cy": link["cy"], "w": link["w"], "h": link["h"],
             "source": "annotation",
             "savedAt": args["savedAt"],
-        })
+        }
+        if task:
+            crop_args["task"] = str(task)
+        if project:
+            crop_args["project"] = str(project)
+        _enqueue("crops:record", crop_args)
 
 
 @atexit.register

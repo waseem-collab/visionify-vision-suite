@@ -62,6 +62,12 @@ TOKENS = """
     --sh-lg:0 18px 44px rgba(16,24,40,.16);
     --ring:0 0 0 3px rgba(37,99,235,.20);
   }
+  /* Theme-toggle circle reveal: the new theme sweeps out of the clicked button
+     (View Transitions API). Default cross-fade is disabled so the clip-path
+     circle in toggleTheme() is the only animation. */
+  ::view-transition-old(root),::view-transition-new(root){animation:none;mix-blend-mode:normal;}
+  ::view-transition-old(root){z-index:1;}
+  ::view-transition-new(root){z-index:2;}
 """
 
 # The inference web app and the crop tools were built against a different set of
@@ -138,11 +144,27 @@ function updateThemeIcons(){
     b.title = dark?'switch to light mode':'switch to dark mode';
   });
 }
-function toggleTheme(){
+function toggleTheme(e){
   const next = currentTheme()==='light' ? 'dark' : 'light';
-  document.documentElement.setAttribute('data-theme', next);
-  try{ localStorage.setItem('theme', next); }catch(e){}   // remember the last choice
-  updateThemeIcons();
+  const apply = () => {
+    document.documentElement.setAttribute('data-theme', next);
+    try{ localStorage.setItem('theme', next); }catch(err){}   // remember the last choice
+    updateThemeIcons();
+  };
+  // Circle reveal growing out of the clicked button (View Transitions API);
+  // browsers without it just switch instantly.
+  if (!document.startViewTransition){ apply(); return; }
+  const btn = e && e.currentTarget instanceof Element ? e.currentTarget : null;
+  const b = btn ? btn.getBoundingClientRect() : null;
+  const x = b ? b.left + b.width/2 : innerWidth/2;
+  const y = b ? b.top + b.height/2 : innerHeight/2;
+  const r = Math.hypot(Math.max(x, innerWidth-x), Math.max(y, innerHeight-y));
+  document.startViewTransition(apply).ready.then(() => {
+    document.documentElement.animate(
+      { clipPath: ['circle(0px at '+x+'px '+y+'px)', 'circle('+r+'px at '+x+'px '+y+'px)'] },
+      { duration: 480, easing: 'cubic-bezier(.2,0,.2,1)', pseudoElement: '::view-transition-new(root)' }
+    );
+  }).catch(()=>{});
 }
 updateThemeIcons();
 """
@@ -152,7 +174,7 @@ _HOME_ICON = ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke
               '<path d="M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5"/>'
               '<path d="M9.5 21v-6h5v6"/></svg>')
 
-THEME_BUTTON = '<button class="theme-btn" onclick="toggleTheme()" title="toggle theme"></button>'
+THEME_BUTTON = '<button class="theme-btn" onclick="toggleTheme(event)" title="toggle theme"></button>'
 # "/home" is served by the suite shell. Sub-apps link here rather than "/" because
 # run.py rewrites their root-absolute URLs to their own mount point.
 HOME_BUTTON = f'<a class="home-btn" href="/home" title="Back to the suite">{_HOME_ICON}Suite</a>'
