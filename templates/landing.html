@@ -35,6 +35,7 @@ __THEME__
   .card.crops .icon{background:var(--warn-soft);color:var(--warn);}
   .card.heatmap .icon{background:rgba(219,39,119,.14);color:#db2777;}
   .card.cameras .icon{background:rgba(20,184,166,.14);color:#14b8a6;}
+  .card.frames .icon{background:rgba(168,85,247,.14);color:#a855f7;}
   .card h2{font-size:17px;margin:0 0 8px;font-weight:650;}
   .card p{color:var(--text-muted);font-size:13px;line-height:1.6;margin:0 0 16px;flex:1;}
   .tools{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;}
@@ -94,6 +95,14 @@ __THEME__
         <p>Browse and manage the camera registry — every camera's company, site, name and scene thumbnail. Search across all cameras, edit or rename them, and remove ones that don't belong.</p>
         <div class="tools"><span>Registry</span><span>Thumbnails</span><span>Rename</span><span>Search</span></div>
         <span class="open">Open configuration →</span>
+      </a>
+
+      <a class="card frames" href="/frames">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18M7 5v14M17 5v14"/></svg></div>
+        <h2>Frame Extractor</h2>
+        <p>Drop a CSV of video links, pick the URL column and a frame number. SAS tokens are refreshed automatically and the chosen frame of every video is saved with the suite's naming.</p>
+        <div class="tools"><span>Drag &amp; drop CSV</span><span>SAS refresh</span><span>Pick frame</span><span>Batch extract</span></div>
+        <span class="open">Open extractor →</span>
       </a>
     </div>
   </div>

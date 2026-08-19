@@ -47,6 +47,7 @@ EXPORTS_ROOT = DATA_DIR / "exports"          # annotated videos rendered by "exp
 # Crop tools
 # --------------------------------------------------------------------------- #
 PERSON_CROPS_ROOT = DATA_DIR / "person_crops"        # balanced crop batches
+FRAMES_ROOT = DATA_DIR / "extracted_frames"      # Frame Extractor output (per batch)
 REPORTS_ROOT = DATA_DIR / "crop_reports"             # heatmaps + manifests
 DISAGREE_ROOT = DATA_DIR / "disagreement_frames"     # teacher/student mining output
 
@@ -71,7 +72,7 @@ CMP_HIST_FILE = STATE_DIR / "cmp_history.json"
 RUNTIME_DIRS = (
     MODELS_DIR, UPLOAD_MODELS_DIR, IMPORTS_DIR, VAL_DIR,
     CROPS_ROOT, EXPORTS_ROOT,
-    PERSON_CROPS_ROOT, REPORTS_ROOT, DISAGREE_ROOT,
+    PERSON_CROPS_ROOT, REPORTS_ROOT, DISAGREE_ROOT, FRAMES_ROOT,
     STATE_DIR,
 )
 

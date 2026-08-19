@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Frames · Vision Suite</title>
+__THEME_SCRIPT__
+<style>
+__THEME__
+  html,body{margin:0;min-height:100%;}
+  body{display:flex;flex-direction:column;}
+  .topbar{display:flex;align-items:center;gap:14px;padding:16px 22px;border-bottom:1px solid var(--border);}
+  .brand{display:flex;align-items:center;gap:9px;font-weight:800;letter-spacing:2px;font-size:13px;color:var(--text);}
+  .brand .dot{width:9px;height:9px;border-radius:50%;background:var(--accent);}
+  .spacer{flex:1;}
+  .wrap{max-width:860px;width:100%;margin:0 auto;padding:24px 22px 48px;}
+  h1{font-size:22px;margin:0 0 4px;font-weight:650;display:flex;align-items:center;gap:11px;}
+  h1::before{content:"";width:4px;height:20px;border-radius:2px;background:var(--accent);}
+  .sub{color:var(--text-muted);margin:0 0 22px;font-size:13.5px;line-height:1.55;}
+
+  .drop{border:2px dashed var(--border-2);border-radius:var(--r-lg);padding:44px 24px;text-align:center;
+    color:var(--text-muted);font-size:14px;cursor:pointer;transition:border-color .15s,background .15s;}
+  .drop.hover{border-color:var(--accent);background:var(--accent-soft);color:var(--text);}
+  .drop b{color:var(--text);}
+  .drop .small{font-size:12px;margin-top:6px;color:var(--text-dim);}
+  .filemeta{margin:14px 0 0;font-size:12.5px;color:var(--text-muted);font-family:var(--mono);}
+
+  .step{margin-top:22px;display:none;}
+  .step.show{display:block;}
+  .step h2{font-size:13px;text-transform:uppercase;letter-spacing:.8px;color:var(--text-muted);margin:0 0 10px;font-weight:600;}
+  .hfilter{width:100%;height:36px;padding:8px 11px;font-size:13px;color:var(--text);background:var(--surface-2);
+    border:1px solid var(--border-2);border-radius:var(--r);margin-bottom:10px;}
+  .hfilter:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring);}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;max-height:220px;overflow-y:auto;padding:2px;}
+  .hchip{font-size:12.5px;font-family:var(--mono);color:var(--text);background:var(--surface-2);
+    border:1px solid var(--border-2);border-radius:999px;padding:7px 13px;cursor:pointer;transition:border-color .12s,background .12s;}
+  .hchip:hover{border-color:var(--accent);}
+  .hchip.sel{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);font-weight:600;}
+
+  .row{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-top:18px;}
+  .f{display:flex;flex-direction:column;gap:5px;}
+  .f label{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--text-muted);font-weight:600;}
+  .f input{width:120px;height:38px;padding:8px 11px;font-size:13px;font-family:var(--mono);text-align:center;
+    color:var(--text);background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);}
+  .f input:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring);}
+  .gobtn{height:38px;padding:0 22px;font-weight:600;font-size:13px;color:var(--accent-fg);background:var(--accent);
+    border:none;border-radius:var(--r);cursor:pointer;}
+  .gobtn:hover{filter:brightness(1.08);}
+  .gobtn:disabled{opacity:.55;cursor:default;}
+
+  .prog{margin-top:22px;display:none;}
+  .prog.show{display:block;}
+  .prow{display:flex;align-items:center;gap:12px;}
+  .prow .bar{flex:1;}
+  .stopbtn{height:32px;padding:0 16px;font-size:12.5px;font-weight:600;color:var(--danger);
+    background:var(--danger-soft);border:1px solid var(--danger-border);border-radius:var(--r);cursor:pointer;}
+  .stopbtn:hover{background:var(--danger);color:#fff;}
+  .stopbtn:disabled{opacity:.55;cursor:default;}
+  .bar{height:8px;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;overflow:hidden;}
+  .bar>div{height:100%;width:0;background:var(--accent);border-radius:5px;transition:width .3s;}
+  .pmsg{margin-top:10px;font-size:13px;color:var(--text-muted);font-family:var(--mono);word-break:break-all;}
+  .pmsg.ok{color:var(--ok);}
+  .pmsg.err{color:var(--danger);}
+  .errlist{margin-top:8px;font-size:12px;color:var(--danger);font-family:var(--mono);max-height:140px;overflow-y:auto;}
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="dot"></span>VISION SUITE</div>
+    <div class="spacer"></div>
+    <a class="home-btn" href="/home" title="Back to the suite"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5"/><path d="M9.5 21v-6h5v6"/></svg>Suite</a>
+    __THEME_BUTTON__
+  </header>
+
+  <div class="wrap">
+    <h1>Frame Extractor</h1>
+    <p class="sub">Drop a CSV of video links, pick the column holding the URLs and a frame number. Each URL gets a freshly minted SAS token, the video is opened straight from blob storage, and the chosen frame is saved as <code>&lt;video&gt;_&lt;frame&gt;.jpg</code> — the suite's naming, so the frames slot into every other tool.</p>
+
+    <div class="drop" id="drop">
+      <b>Drop your CSV here</b> — or click to browse
+      <div class="small">.csv with a column of Azure blob video URLs</div>
+    </div>
+    <input type="file" id="file" accept=".csv" hidden>
+    <div class="filemeta" id="filemeta"></div>
+
+    <div class="step" id="step_col">
+      <h2>Which column holds the video URLs?</h2>
+      <input class="hfilter" id="hfilter" placeholder="Type to filter headers…" autocomplete="off" spellcheck="false">
+      <div class="chips" id="chips"></div>
+      <div class="row">
+        <div class="f"><label for="framenum">Frame number</label><input id="framenum" type="number" min="0" step="1" value="24" inputmode="numeric"></div>
+        <button class="gobtn" id="go" disabled>Extract frames</button>
+      </div>
+    </div>
+
+    <div class="prog" id="prog">
+      <div class="prow">
+        <div class="bar"><div id="pbar"></div></div>
+        <button class="stopbtn" id="stop" hidden>Stop</button>
+      </div>
+      <div class="pmsg" id="pmsg"></div>
+      <div class="errlist" id="perrs"></div>
+    </div>
+  </div>
+
+<script>
+__THEME_JS__
+const $ = (id) => document.getElementById(id);
+let HEADERS = [], SELECTED = '', CSVNAME = '';
+
+// ---- drop zone ----
+const drop = $('drop');
+drop.addEventListener('click', () => $('file').click());
+['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('hover'); }));
+['dragleave','drop'].forEach(ev => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('hover'); }));
+drop.addEventListener('drop', (e) => { const f = e.dataTransfer.files[0]; if (f) upload(f); });
+$('file').addEventListener('change', (e) => { const f = e.target.files[0]; if (f) upload(f); });
+
+async function upload(file){
+  $('filemeta').textContent = 'Uploading ' + file.name + '…';
+  const fd = new FormData();
+  fd.append('file', file);
+  let res;
+  try { res = await fetch('/api/frames/upload', { method: 'POST', body: fd }).then(r => r.json()); }
+  catch(e){ $('filemeta').textContent = 'Upload failed — could not reach the server.'; return; }
+  if (!res.ok){ $('filemeta').textContent = res.error || 'Upload failed.'; return; }
+  HEADERS = res.headers; CSVNAME = res.name; SELECTED = '';
+  $('filemeta').textContent = res.name + ' — ' + res.rows.toLocaleString() + ' rows, ' + res.headers.length + ' columns';
+  $('hfilter').value = '';
+  renderChips();
+  $('step_col').classList.add('show');
+  $('prog').classList.remove('show');
+  $('go').disabled = true;
+  // Best guess pre-selection: a header that smells like a video URL column.
+  const guess = HEADERS.find(h => /video.*(path|url)|(path|url).*video/i.test(h));
+  if (guess) selectHeader(guess);
+}
+
+// ---- header chips ----
+function renderChips(){
+  const q = $('hfilter').value.trim().toLowerCase();
+  const host = $('chips'); host.innerHTML = '';
+  HEADERS.filter(h => !q || h.toLowerCase().includes(q)).forEach(h => {
+    const c = document.createElement('button');
+    c.className = 'hchip' + (h === SELECTED ? ' sel' : '');
+    c.textContent = h;
+    c.addEventListener('click', () => selectHeader(h));
+    host.appendChild(c);
+  });
+}
+function selectHeader(h){
+  SELECTED = h;
+  renderChips();
+  $('go').disabled = false;
+}
+$('hfilter').addEventListener('input', renderChips);
+
+// ---- run + poll ----
+let poll = null;
+$('go').addEventListener('click', async () => {
+  if (!SELECTED) return;
+  $('go').disabled = true;
+  $('prog').classList.add('show');
+  $('pmsg').className = 'pmsg'; $('pmsg').textContent = 'Starting…'; $('perrs').textContent = '';
+  $('pbar').style.width = '0';
+  const res = await fetch('/api/frames/start', { method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ column: SELECTED, frame: Number($('framenum').value) || 24, name: CSVNAME }),
+  }).then(r => r.json()).catch(() => ({}));
+  if (!res.ok){ $('pmsg').textContent = res.error || 'Could not start.'; $('pmsg').classList.add('err'); $('go').disabled = false; return; }
+  $('stop').hidden = false; $('stop').disabled = false; $('stop').textContent = 'Stop';
+  poll = setInterval(pollStatus, 700);
+});
+
+$('stop').addEventListener('click', async () => {
+  $('stop').disabled = true; $('stop').textContent = 'Stopping…';
+  await fetch('/api/frames/stop', { method: 'POST' }).catch(() => {});
+});
+
+async function pollStatus(){
+  let s;
+  try { s = await fetch('/api/frames/status').then(r => r.json()); } catch(e){ return; }
+  const pct = s.total ? Math.round(s.processed / s.total * 100) : (s.running ? 5 : 0);
+  $('pbar').style.width = pct + '%';
+  const base = (s.sas_refreshed || 0) + ' SAS refreshed · ' + (s.saved || 0) + ' saved · '
+    + (s.failed || 0) + ' failed · ' + (s.skipped || 0) + ' skipped'
+    + ((s.cancelled || 0) ? ' · ' + s.cancelled + ' cancelled' : '');
+  if (s.error){ $('pmsg').textContent = s.error; $('pmsg').className = 'pmsg err'; }
+  else if (s.done){ $('pmsg').textContent = '✓ ' + (s.message || 'Done.'); $('pmsg').className = 'pmsg ok'; }
+  else { $('pmsg').textContent = (s.message || '') + ' — ' + base; }
+  $('perrs').textContent = (s.errors || []).join('\n');
+  if (s.done || s.error){
+    clearInterval(poll); poll = null; $('go').disabled = false;
+    $('stop').hidden = true;
+  }
+}
+</script>
+</body>
+</html>

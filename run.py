@@ -422,6 +422,77 @@ def cameras_delete():
     return {"ok": True, "untagged": (res or {}).get("untagged", 0)}
 
 
+@shell.get("/frames")
+def frames_page():
+    page = (paths.ROOT / "templates" / "frames.html").read_text(encoding="utf-8")
+    page = (page
+            .replace("__THEME__", theme.stylesheet())
+            .replace("__THEME_SCRIPT__", theme.THEME_SCRIPT)
+            .replace("__THEME_JS__", theme.THEME_JS)
+            .replace("__THEME_BUTTON__", theme.THEME_BUTTON))
+    resp = Response(page, mimetype="text/html")
+    resp.headers["Cache-Control"] = "no-store, must-revalidate"
+    return resp
+
+
+_FRAMES_UPLOAD = paths.STATE_DIR / "frame_extract_upload.csv"
+
+
+@shell.post("/api/frames/upload")
+def frames_upload():
+    """Receive the dropped CSV, stash it, and return its headers."""
+    from core import frame_extract
+    f = request.files.get("file")
+    if f is None:
+        return {"ok": False, "error": "No file received."}, 400
+    if not (f.filename or "").lower().endswith(".csv"):
+        return {"ok": False, "error": "Please drop a .csv file."}, 400
+    raw = f.read()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1")
+    headers = frame_extract.read_headers(text)
+    if not headers:
+        return {"ok": False, "error": "Could not read any headers from the CSV."}, 400
+    _FRAMES_UPLOAD.parent.mkdir(parents=True, exist_ok=True)
+    _FRAMES_UPLOAD.write_text(text, encoding="utf-8")
+    rows = max(0, text.count("\n") - 1)
+    return {"ok": True, "headers": headers, "rows": rows,
+            "name": os.path.basename(f.filename or "upload.csv")}
+
+
+@shell.post("/api/frames/start")
+def frames_start():
+    """Refresh SAS URLs in the chosen column and extract the chosen frame."""
+    from core import frame_extract
+    payload = request.get_json(silent=True) or {}
+    column = str(payload.get("column", "")).strip()
+    if not column:
+        return {"ok": False, "error": "Pick the column that holds the video URLs."}, 400
+    batch = os.path.splitext(str(payload.get("name", "batch")))[0]
+    err = frame_extract.start(_FRAMES_UPLOAD, column, payload.get("frame", 24), batch)
+    if err:
+        return {"ok": False, "error": err}, 409
+    return {"ok": True}
+
+
+@shell.post("/api/frames/stop")
+def frames_stop():
+    """Stop a running extraction (in-flight grabs finish, the rest cancel)."""
+    from core import frame_extract
+    err = frame_extract.stop()
+    if err:
+        return {"ok": False, "error": err}, 409
+    return {"ok": True}
+
+
+@shell.get("/api/frames/status")
+def frames_status():
+    from core import frame_extract
+    return frame_extract.status()
+
+
 # --------------------------------------------------------------------------- #
 # Auth: login (password or Google), logout, and the admin allowlist page.
 # --------------------------------------------------------------------------- #
