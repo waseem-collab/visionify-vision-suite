@@ -36,6 +36,7 @@ __THEME__
   .card.heatmap .icon{background:rgba(219,39,119,.14);color:#db2777;}
   .card.cameras .icon{background:rgba(20,184,166,.14);color:#14b8a6;}
   .card.frames .icon{background:rgba(168,85,247,.14);color:#a855f7;}
+  .card.download .icon{background:rgba(249,115,22,.14);color:#f97316;}
   .card h2{font-size:17px;margin:0 0 8px;font-weight:650;}
   .card p{color:var(--text-muted);font-size:13px;line-height:1.6;margin:0 0 16px;flex:1;}
   .tools{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;}
@@ -103,6 +104,14 @@ __THEME__
         <p>Drop a CSV of video links, pick the URL column and a frame number. SAS tokens are refreshed automatically and the chosen frame of every video is saved with the suite's naming.</p>
         <div class="tools"><span>Drag &amp; drop CSV</span><span>SAS refresh</span><span>Pick frame</span><span>Batch extract</span></div>
         <span class="open">Open extractor →</span>
+      </a>
+
+      <a class="card download" href="/download">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m6 11 6 6 6-6"/><path d="M4 21h16"/></svg></div>
+        <h2>CVAT Download</h2>
+        <p>Pick a CVAT project and task, and get it packaged as a training-ready zip — data.yaml, train/images, train/labels and an empty review folder — with a one-click download when it's built.</p>
+        <div class="tools"><span>Project / task</span><span>Images + labels</span><span>data.yaml</span><span>One-click zip</span></div>
+        <span class="open">Open download →</span>
       </a>
     </div>
   </div>

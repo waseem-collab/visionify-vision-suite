@@ -184,13 +184,35 @@ def _run(csv_path, column, frame_idx, batch):
         seen.add(name)
         jobs.append((url, name, stem))
     _set(total=len(urls), out_dir=str(out_dir), skipped=skipped,
-         message=f"{len(jobs)} video(s) to extract with {_WORKERS} workers")
+         message=f"Refreshing SAS for {len(jobs)} URL(s)…")
 
     counters = {"done": 0, "saved": 0, "failed": 0, "sas": 0, "cancelled": 0}
     errors = []
     clock = threading.Lock()
 
-    def work(url, name, stem):
+    # ---- Phase 1: refresh the SAS of the ENTIRE sheet up front ----
+    # (local HMAC signing, no network — near-instant even for thousands of rows)
+    refreshed = []
+    for url, name, stem in jobs:
+        if _stop_evt.is_set():
+            counters["cancelled"] += 1
+            continue
+        try:
+            fresh = refresh_sas_url(url, account_name, account_key)
+            counters["sas"] += 1
+            refreshed.append((fresh, name, stem))
+        except Exception as exc:
+            counters["failed"] += 1
+            if len(errors) < 25:
+                errors.append(f"{stem}: SAS refresh failed: {exc}")
+        _set(sas_refreshed=counters["sas"], failed=counters["failed"],
+             cancelled=counters["cancelled"], errors=list(errors),
+             message=f"Refreshing SAS… {counters['sas']}/{len(jobs)}")
+    _set(message=f"SAS refreshed for {counters['sas']} URL(s) — "
+                 f"extracting with {_WORKERS} workers…")
+
+    # ---- Phase 2: extract frames from the refreshed URLs ----
+    def work(fresh, name, stem):
         if _stop_evt.is_set():
             with clock:
                 counters["cancelled"] += 1
@@ -198,10 +220,6 @@ def _run(csv_path, column, frame_idx, batch):
             return
         err = None
         try:
-            fresh = refresh_sas_url(url, account_name, account_key)
-            with clock:
-                counters["sas"] += 1
-                _set(sas_refreshed=counters["sas"])
             frame = _grab_frame(fresh, int(frame_idx))
             if frame is None:
                 raise RuntimeError("could not read the frame (video unreadable?)")
@@ -220,7 +238,7 @@ def _run(csv_path, column, frame_idx, batch):
                          f"extracting with {_WORKERS} workers…")
 
     with ThreadPoolExecutor(max_workers=_WORKERS) as ex:
-        for f in [ex.submit(work, *j) for j in jobs]:
+        for f in [ex.submit(work, *j) for j in refreshed]:
             f.result()   # work() swallows its own errors; this just waits
 
     saved, failed = counters["saved"], counters["failed"]

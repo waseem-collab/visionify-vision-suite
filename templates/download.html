@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Download · Vision Suite</title>
+__THEME_SCRIPT__
+<style>
+__THEME__
+  html,body{margin:0;min-height:100%;}
+  body{display:flex;flex-direction:column;}
+  .topbar{display:flex;align-items:center;gap:14px;padding:16px 22px;border-bottom:1px solid var(--border);}
+  .brand{display:flex;align-items:center;gap:9px;font-weight:800;letter-spacing:2px;font-size:13px;color:var(--text);}
+  .brand .dot{width:9px;height:9px;border-radius:50%;background:var(--accent);}
+  .spacer{flex:1;}
+  .wrap{max-width:760px;width:100%;margin:0 auto;padding:24px 22px 48px;}
+  h1{font-size:22px;margin:0 0 4px;font-weight:650;display:flex;align-items:center;gap:11px;}
+  h1::before{content:"";width:4px;height:20px;border-radius:2px;background:var(--accent);}
+  .sub{color:var(--text-muted);margin:0 0 22px;font-size:13.5px;line-height:1.55;}
+  .sub code{font-family:var(--mono);font-size:12px;background:var(--surface-2);padding:1px 5px;border-radius:4px;}
+
+  .row{display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end;}
+  .field{display:flex;flex-direction:column;gap:5px;min-width:0;}
+  .field label{font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--text-muted);font-weight:600;}
+  .combo{position:relative;}
+  .combo input{width:100%;height:38px;padding:8px 11px;font-size:13px;color:var(--text);
+    background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);
+    transition:border-color .14s,box-shadow .14s;text-overflow:ellipsis;}
+  .combo input:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring);}
+  .combo-list{position:absolute;top:calc(100% + 5px);left:0;right:0;z-index:60;display:none;padding:4px;
+    background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);
+    max-height:380px;overflow-y:auto;box-shadow:0 12px 32px rgba(0,0,0,.45);scrollbar-width:thin;}
+  .combo-list::-webkit-scrollbar{width:10px;}
+  .combo-list::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:5px;}
+  .combo.open .combo-list{display:block;}
+  .combo-list .op{padding:7px 10px;font-size:13px;color:var(--text);cursor:pointer;border-radius:6px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .combo-list .op:hover,.combo-list .op.hl{background:var(--accent);color:var(--accent-fg);}
+  .gobtn{height:38px;padding:0 22px;font-weight:600;font-size:13px;color:var(--accent-fg);background:var(--accent);
+    border:none;border-radius:var(--r);cursor:pointer;}
+  .gobtn:hover{filter:brightness(1.08);}
+  .gobtn:disabled{opacity:.55;cursor:default;}
+
+  .prog{margin-top:24px;display:none;}
+  .prog.show{display:block;}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--border-2);border-top-color:var(--accent);
+    border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px;margin-right:8px;}
+  @keyframes sp{to{transform:rotate(360deg);}}
+  .pmsg{font-size:13px;color:var(--text-muted);font-family:var(--mono);word-break:break-all;}
+  .pmsg.ok{color:var(--ok);}
+  .pmsg.err{color:var(--danger);}
+  .dlbtn{display:none;margin-top:16px;height:44px;padding:0 26px;font-weight:650;font-size:14px;
+    color:var(--ok-fg);background:var(--ok);border:none;border-radius:var(--r);cursor:pointer;
+    align-items:center;gap:9px;text-decoration:none;}
+  .dlbtn.show{display:inline-flex;}
+  .dlbtn:hover{background:var(--ok-deep);}
+  .dlbtn svg{width:17px;height:17px;}
+  .built{margin-top:30px;}
+  .built-h{font-size:13px;text-transform:uppercase;letter-spacing:.8px;color:var(--text-muted);margin:0 0 10px;font-weight:600;}
+  .brow{display:flex;align-items:center;gap:12px;padding:9px 13px;border:1px solid var(--border);
+    border-radius:var(--r);margin-bottom:7px;font-size:13px;}
+  .brow .nm{flex:1;font-family:var(--mono);color:var(--text);word-break:break-all;}
+  .brow .sz{font-size:12px;color:var(--text-muted);font-family:var(--mono);white-space:nowrap;}
+  .brow a{color:var(--accent);font-weight:600;text-decoration:none;white-space:nowrap;}
+  .brow a:hover{text-decoration:underline;}
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="dot"></span>VISION SUITE</div>
+    <div class="spacer"></div>
+    <a class="home-btn" href="/home" title="Back to the suite"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5"/><path d="M9.5 21v-6h5v6"/></svg>Suite</a>
+    __THEME_BUTTON__
+  </header>
+
+  <div class="wrap">
+    <h1>CVAT Download</h1>
+    <p class="sub">Pick a project and task — the task is exported from CVAT with its images and packaged as <code>&lt;task&gt;/data.yaml + train/images + train/labels (+ review/)</code>, the team's dataset layout. When the zip is ready, a download button appears.</p>
+
+    <div class="row">
+      <div class="field"><label for="p_sel">Project</label>
+        <div class="combo"><input id="p_sel" placeholder="Loading projects…" autocomplete="off" spellcheck="false"><div class="combo-list"></div></div></div>
+      <div class="field"><label for="t_sel">Task</label>
+        <div class="combo"><input id="t_sel" placeholder="Pick a project first" autocomplete="off" spellcheck="false" disabled><div class="combo-list"></div></div></div>
+      <button class="gobtn" id="go" disabled>Prepare ZIP</button>
+    </div>
+
+    <div class="prog" id="prog">
+      <div class="pmsg" id="pmsg"></div>
+      <a class="dlbtn" id="dl" href="/api/cvatdl/file">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m6 11 6 6 6-6"/><path d="M4 21h16"/></svg>
+        Download ZIP
+      </a>
+    </div>
+
+    <div class="built" id="built" hidden>
+      <h2 class="built-h">Ready to download</h2>
+      <div id="builtlist"></div>
+    </div>
+  </div>
+
+<script>
+__THEME_JS__
+const $ = (id) => document.getElementById(id);
+let PROJECTS = [], TASKS = [], SEL_TASK = null;
+
+// Minimal searchable combo (select-only): type filters, click picks.
+function combo(input, optionsFn, onPick){
+  const box = input.parentElement, list = box.querySelector('.combo-list');
+  const norm = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  function render(){
+    const q = norm(input.value);
+    list.innerHTML = '';
+    const opts = optionsFn().filter(o => !q || norm(o).includes(q));
+    opts.forEach(o => {
+      const d = document.createElement('div');
+      d.className = 'op'; d.textContent = o;
+      d.addEventListener('mousedown', e => { e.preventDefault(); input.value = o; box.classList.remove('open'); onPick(o); });
+      list.appendChild(d);
+    });
+    box.classList.toggle('open', opts.length > 0);
+  }
+  input.addEventListener('focus', () => { input.select(); render(); });
+  input.addEventListener('input', render);
+  input.addEventListener('blur', () => box.classList.remove('open'));
+}
+
+combo($('p_sel'), () => PROJECTS.map(p => p.name), async (name) => {
+  SEL_TASK = null; TASKS = []; $('t_sel').value = ''; $('go').disabled = true;
+  const p = PROJECTS.find(x => x.name === name);
+  $('t_sel').disabled = !p;
+  $('t_sel').placeholder = p ? 'Loading tasks…' : 'Pick a project first';
+  if (!p) return;
+  try {
+    const j = await fetch('/annotate/api/cvat/tasks?project_id=' + encodeURIComponent(p.id)).then(r => r.json());
+    TASKS = j.tasks || [];
+    $('t_sel').placeholder = TASKS.length ? 'Select task…' : 'No tasks in this project';
+  } catch(e){ $('t_sel').placeholder = 'CVAT unreachable'; }
+});
+combo($('t_sel'), () => TASKS.map(t => t.name), (name) => {
+  SEL_TASK = TASKS.find(t => t.name === name) || null;
+  $('go').disabled = !SEL_TASK;
+});
+
+(async () => {
+  try {
+    const j = await fetch('/annotate/api/cvat/projects').then(r => r.json());
+    PROJECTS = j.projects || [];
+    $('p_sel').placeholder = PROJECTS.length ? 'Select project…' : 'No CVAT projects found';
+  } catch(e){ $('p_sel').placeholder = 'CVAT unreachable'; }
+})();
+
+async function loadBuilt(){
+  try {
+    const j = await fetch('/api/cvatdl/list').then(r => r.json());
+    const zips = j.zips || [];
+    $('built').hidden = zips.length === 0;
+    $('builtlist').innerHTML = '';
+    zips.forEach(z => {
+      const d = document.createElement('div'); d.className = 'brow';
+      const a = document.createElement('a');
+      a.href = '/api/cvatdl/file?name=' + encodeURIComponent(z.name);
+      a.textContent = 'Download';
+      d.innerHTML = '<span class="nm">' + z.name.replace(/</g,'&lt;') + '</span>'
+                  + '<span class="sz">' + z.size_mb + ' MB</span>';
+      d.appendChild(a);
+      $('builtlist').appendChild(d);
+    });
+  } catch(e){}
+}
+loadBuilt();
+
+let poll = null;
+$('go').addEventListener('click', async () => {
+  if (!SEL_TASK) return;
+  $('go').disabled = true;
+  $('prog').classList.add('show');
+  $('dl').classList.remove('show');
+  $('pmsg').className = 'pmsg';
+  $('pmsg').innerHTML = '<span class="spin"></span>Starting…';
+  const res = await fetch('/api/cvatdl/start', { method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ task_id: SEL_TASK.id, task_name: SEL_TASK.name }),
+  }).then(r => r.json()).catch(() => ({}));
+  if (!res.ok){ $('pmsg').textContent = res.error || 'Could not start.'; $('pmsg').classList.add('err'); $('go').disabled = false; return; }
+  poll = setInterval(pollStatus, 900);
+});
+
+async function pollStatus(){
+  let s;
+  try { s = await fetch('/api/cvatdl/status').then(r => r.json()); } catch(e){ return; }
+  if (s.error){
+    $('pmsg').textContent = s.message || s.error; $('pmsg').className = 'pmsg err';
+  } else if (s.done){
+    $('pmsg').textContent = '✓ ' + (s.message || 'Ready.'); $('pmsg').className = 'pmsg ok';
+    if (s.zip_name) $('dl').href = '/api/cvatdl/file?name=' + encodeURIComponent(s.zip_name);
+    $('dl').classList.add('show');
+    loadBuilt();
+  } else {
+    $('pmsg').innerHTML = '<span class="spin"></span>' + (s.message || 'Working…');
+  }
+  if (s.done || s.error){
+    clearInterval(poll); poll = null; $('go').disabled = !SEL_TASK;
+  }
+}
+</script>
+</body>
+</html>

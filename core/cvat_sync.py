@@ -68,10 +68,12 @@ def _session():
     return s, url
 
 
-def _export_labels(session, base_url, task_id, zip_path):
-    """Export a task as 'YOLO 1.1' WITHOUT images and download the zip."""
+def _export_labels(session, base_url, task_id, zip_path, save_images=False):
+    """Export a task as 'YOLO 1.1' and download the zip. By default labels
+    only; ``save_images=True`` bundles the frames too (the download card)."""
     r = session.post(f"{base_url}/api/tasks/{task_id}/dataset/export",
-                     params={"format": "YOLO 1.1", "save_images": "false",
+                     params={"format": "YOLO 1.1",
+                             "save_images": "true" if save_images else "false",
                              "location": "local"})
     if r.status_code not in (200, 201, 202):
         raise RuntimeError(f"export init failed {r.status_code}: {r.text[:160]}")
@@ -79,7 +81,7 @@ def _export_labels(session, base_url, task_id, zip_path):
     if not rq_id:
         raise RuntimeError(f"no rq_id from export: {r.text[:160]}")
     waited = 0
-    while waited < 900:
+    while waited < 1800:   # image exports can be large
         st = session.get(f"{base_url}/api/requests/{rq_id}").json()
         s = (st.get("status") or "").lower()
         if s == "finished":

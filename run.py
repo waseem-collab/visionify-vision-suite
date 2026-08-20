@@ -493,6 +493,66 @@ def frames_status():
     return frame_extract.status()
 
 
+@shell.get("/download")
+def download_page():
+    page = (paths.ROOT / "templates" / "download.html").read_text(encoding="utf-8")
+    page = (page
+            .replace("__THEME__", theme.stylesheet())
+            .replace("__THEME_SCRIPT__", theme.THEME_SCRIPT)
+            .replace("__THEME_JS__", theme.THEME_JS)
+            .replace("__THEME_BUTTON__", theme.THEME_BUTTON))
+    resp = Response(page, mimetype="text/html")
+    resp.headers["Cache-Control"] = "no-store, must-revalidate"
+    return resp
+
+
+@shell.post("/api/cvatdl/start")
+def cvatdl_start():
+    """Package a CVAT task (images + YOLO labels + data.yaml) as a zip."""
+    from core import cvat_download
+    payload = request.get_json(silent=True) or {}
+    err = cvat_download.start(payload.get("task_id"),
+                              str(payload.get("task_name", "task")))
+    if err:
+        return {"ok": False, "error": err}, 409
+    return {"ok": True}
+
+
+@shell.get("/api/cvatdl/status")
+def cvatdl_status():
+    from core import cvat_download
+    return cvat_download.status()
+
+
+@shell.get("/api/cvatdl/list")
+def cvatdl_list():
+    """Already-built zips, newest first — downloads survive server restarts."""
+    out = []
+    if paths.CVAT_DL_ROOT.is_dir():
+        for p in paths.CVAT_DL_ROOT.glob("*.zip"):
+            st = p.stat()
+            out.append({"name": p.name, "size_mb": round(st.st_size / 1e6, 1),
+                        "mtime": int(st.st_mtime)})
+    out.sort(key=lambda z: z["mtime"], reverse=True)
+    return {"zips": out}
+
+
+@shell.get("/api/cvatdl/file")
+def cvatdl_file():
+    """Serve a built zip as a browser download. Stateless: any zip in
+    CVAT_DL_ROOT can be fetched by name, so a server reload between building
+    and clicking Download can never break the button."""
+    from flask import send_file
+    name = os.path.basename(str(request.args.get("name", "")).strip())
+    if not name:
+        from core import cvat_download
+        name = cvat_download.status().get("zip_name") or ""
+    zip_path = paths.CVAT_DL_ROOT / name
+    if not (name.endswith(".zip") and zip_path.is_file()):
+        return {"ok": False, "error": "No finished zip to download."}, 404
+    return send_file(zip_path, as_attachment=True, download_name=name)
+
+
 # --------------------------------------------------------------------------- #
 # Auth: login (password or Google), logout, and the admin allowlist page.
 # --------------------------------------------------------------------------- #
@@ -727,6 +787,10 @@ if __name__ == "__main__":
             use_reloader=use_reload,
             use_debugger=False,
             extra_files=[str(LANDING_TEMPLATE), str(paths.ROOT / "templates" / "heatmap.html")],
+            # The reloader watches *.zip by default (zipimport support), so a
+            # tool writing a zip under data/ would restart the server and kill
+            # the very job writing it. Runtime output must never trigger reloads.
+            exclude_patterns=[str(paths.DATA_DIR / "*"), str(paths.STATE_DIR / "*")],
         )
         _hard_exit(0)
     except SystemExit as exc:
