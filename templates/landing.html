@@ -37,6 +37,7 @@ __THEME__
   .card.cameras .icon{background:rgba(20,184,166,.14);color:#14b8a6;}
   .card.frames .icon{background:rgba(168,85,247,.14);color:#a855f7;}
   .card.download .icon{background:rgba(249,115,22,.14);color:#f97316;}
+  .card.review .icon{background:rgba(6,182,212,.14);color:#06b6d4;}
   .card h2{font-size:17px;margin:0 0 8px;font-weight:650;}
   .card p{color:var(--text-muted);font-size:13px;line-height:1.6;margin:0 0 16px;flex:1;}
   .tools{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;}
@@ -112,6 +113,14 @@ __THEME__
         <p>Pick a CVAT project and task, and get it packaged as a training-ready zip — data.yaml, train/images, train/labels and an empty review folder — with a one-click download when it's built.</p>
         <div class="tools"><span>Project / task</span><span>Images + labels</span><span>data.yaml</span><span>One-click zip</span></div>
         <span class="open">Open download →</span>
+      </a>
+
+      <a class="card review" href="/review">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="9" height="14" rx="1.5"/><rect x="13" y="5" width="9" height="14" rx="1.5"/><path d="m5.5 12 2 2 3-3.5"/></svg></div>
+        <h2>Event Review</h2>
+        <p>Upload an event export, refresh every SAS URL in one pass, extract frame 24 of each raw and inference video, then review them side by side with arrow keys — tagging events and exporting the sheet with your tags.</p>
+        <div class="tools"><span>Raw vs inference</span><span>SAS refresh</span><span>Keyboard review</span><span>Tags + export</span></div>
+        <span class="open">Open review →</span>
       </a>
     </div>
   </div>

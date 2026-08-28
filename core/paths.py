@@ -49,6 +49,7 @@ EXPORTS_ROOT = DATA_DIR / "exports"          # annotated videos rendered by "exp
 PERSON_CROPS_ROOT = DATA_DIR / "person_crops"        # balanced crop batches
 FRAMES_ROOT = DATA_DIR / "extracted_frames"      # Frame Extractor output (per batch)
 CVAT_DL_ROOT = DATA_DIR / "cvat_downloads"       # CVAT Download card's packaged zips
+EVENT_REVIEW_ROOT = DATA_DIR / "event_review"    # Event Review sessions (frames, videos, tags)
 REPORTS_ROOT = DATA_DIR / "crop_reports"             # heatmaps + manifests
 DISAGREE_ROOT = DATA_DIR / "disagreement_frames"     # teacher/student mining output
 
@@ -74,6 +75,7 @@ RUNTIME_DIRS = (
     MODELS_DIR, UPLOAD_MODELS_DIR, IMPORTS_DIR, VAL_DIR,
     CROPS_ROOT, EXPORTS_ROOT,
     PERSON_CROPS_ROOT, REPORTS_ROOT, DISAGREE_ROOT, FRAMES_ROOT, CVAT_DL_ROOT,
+    EVENT_REVIEW_ROOT,
     STATE_DIR,
 )
 

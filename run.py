@@ -38,6 +38,10 @@ from werkzeug.serving import run_simple
 from core import auth, convex_client, paths, ports, theme
 
 paths.ensure_dirs()
+# Load .env into os.environ NOW: auth reads AUTH_SECRET from the environment,
+# and leaving it to convex_client's lazy loader means a freshly (re)started
+# server can 401 valid session cookies until some Convex call happens first.
+convex_client.convex_url()
 
 # Importing the tools pulls in torch/ultralytics/opencv, so it takes a moment.
 from apps import annotation_app, crop_balancer_app, web_app
@@ -551,6 +555,283 @@ def cvatdl_file():
     if not (name.endswith(".zip") and zip_path.is_file()):
         return {"ok": False, "error": "No finished zip to download."}, 404
     return send_file(zip_path, as_attachment=True, download_name=name)
+
+
+# --------------------------------------------------------------------------- #
+# Event Review — raw vs inference (core/event_review.py does the work)
+# --------------------------------------------------------------------------- #
+@shell.get("/review")
+def review_page():
+    page = (paths.ROOT / "templates" / "review.html").read_text(encoding="utf-8")
+    page = (page
+            .replace("__THEME__", theme.stylesheet())
+            .replace("__THEME_SCRIPT__", theme.THEME_SCRIPT)
+            .replace("__THEME_JS__", theme.THEME_JS)
+            .replace("__THEME_BUTTON__", theme.THEME_BUTTON))
+    resp = Response(page, mimetype="text/html")
+    resp.headers["Cache-Control"] = "no-store, must-revalidate"
+    return resp
+
+
+def _ev():
+    from core import event_review
+    return event_review
+
+
+def _ev_guard(fn):
+    """Run one event-review handler, mapping ApiError to (json, code)."""
+    try:
+        return fn()
+    except Exception as exc:
+        ev = _ev()
+        if isinstance(exc, ev.ApiError):
+            return {"detail": exc.message}, exc.code
+        raise
+
+
+@shell.post("/api/review/upload")
+def review_upload():
+    def go():
+        f = request.files.get("file")
+        if f is None:
+            raise _ev().ApiError(400, "No file received.")
+        return _ev().create_session(f.filename, f.read())
+    return _ev_guard(go)
+
+
+@shell.post("/api/review/columns")
+def review_columns():
+    def go():
+        ev = _ev()
+        p = request.get_json(silent=True) or {}
+        s = ev.get_session(p.get("session_id"))
+        raw_col, inf_col = p.get("raw_col"), p.get("inference_col")
+        for c in (raw_col, inf_col):
+            if c is None or not (0 <= int(c) < len(s.headers)):
+                raise ev.ApiError(400, "Pick a valid raw and inference column.")
+        s.raw_col, s.inf_col = int(raw_col), int(inf_col)
+        return {"ok": True, "raw_col": s.raw_col, "inference_col": s.inf_col}
+    return _ev_guard(go)
+
+
+@shell.post("/api/review/refresh")
+def review_refresh():
+    def go():
+        ev = _ev()
+        s = ev.get_session((request.get_json(silent=True) or {}).get("session_id"))
+        ev.start_refresh(s)
+        with s.lock:
+            return dict(s.refresh_state)
+    return _ev_guard(go)
+
+
+@shell.get("/api/review/refresh/status")
+def review_refresh_status():
+    def go():
+        s = _ev().get_session(request.args.get("session_id"))
+        with s.lock:
+            return dict(s.refresh_state)
+    return _ev_guard(go)
+
+
+@shell.post("/api/review/frames/start")
+def review_frames_start():
+    def go():
+        ev = _ev()
+        s = ev.get_session((request.get_json(silent=True) or {}).get("session_id"))
+        ev.start_frames(s)
+        with s.lock:
+            return dict(s.frame_state)
+    return _ev_guard(go)
+
+
+@shell.post("/api/review/frames/stop")
+def review_frames_stop():
+    def go():
+        s = _ev().get_session((request.get_json(silent=True) or {}).get("session_id"))
+        s.abort.set()
+        return {"ok": True}
+    return _ev_guard(go)
+
+
+@shell.get("/api/review/frames/status")
+def review_frames_status():
+    def go():
+        s = _ev().get_session(request.args.get("session_id"))
+        with s.lock:
+            return dict(s.frame_state)
+    return _ev_guard(go)
+
+
+@shell.get("/api/review/events")
+def review_events():
+    def go():
+        ev = _ev()
+        s = ev.get_session(request.args.get("session_id"))
+        return ev.events_payload(s,
+                                 offset=int(request.args.get("offset", 0)),
+                                 limit=int(request.args.get("limit", 100000)))
+    return _ev_guard(go)
+
+
+@shell.get("/api/review/event/<int:idx>/raw")
+def review_event_raw(idx):
+    def go():
+        ev = _ev()
+        s = ev.get_session(request.args.get("session_id"))
+        if not (0 <= idx < len(s.rows)):
+            raise ev.ApiError(404, "no such event")
+        row = s.rows[idx]
+        return {"idx": idx, "fields": {h: row[i] for i, h in enumerate(s.headers)}}
+    return _ev_guard(go)
+
+
+@shell.get("/api/review/frame/<int:idx>/<kind>")
+def review_frame(idx, kind):
+    def go():
+        from flask import send_file
+        ev = _ev()
+        s = ev.get_session(request.args.get("session_id"))
+        if kind not in ("raw", "inference"):
+            raise ev.ApiError(400, "kind must be raw or inference")
+        p = s.frame_path(idx, kind)
+        if not (p.exists() and p.stat().st_size > 0):
+            raise ev.ApiError(404, "frame not extracted yet")
+        resp = send_file(p, mimetype="image/jpeg")
+        resp.headers["Cache-Control"] = "public, max-age=86400"
+        return resp
+    return _ev_guard(go)
+
+
+@shell.post("/api/review/video/prepare")
+def review_video_prepare():
+    def go():
+        ev = _ev()
+        p = request.get_json(silent=True) or {}
+        s = ev.get_session(p.get("session_id"))
+        idx = int(p["idx"])
+        started = {}
+        for kind in (p.get("kinds") or ["raw", "inference"]):
+            if kind not in ("raw", "inference"):
+                continue
+            key = f"{idx}_{kind}"
+            with s.lock:
+                st = s.video_status.get(key, {})
+            if st.get("state") == "downloading":
+                started[kind] = st
+                continue
+            if s.video_path(idx, kind).exists():
+                started[kind] = {"state": "ready", "pct": 100}
+                with s.lock:
+                    s.video_status[key] = started[kind]
+                continue
+            with s.lock:
+                s.video_status[key] = {"state": "queued", "pct": 0}
+            s.video_pool.submit(ev.download_video, s, idx, kind)
+            started[kind] = {"state": "queued", "pct": 0}
+        return started
+    return _ev_guard(go)
+
+
+@shell.get("/api/review/video/status")
+def review_video_status():
+    def go():
+        s = _ev().get_session(request.args.get("session_id"))
+        idx = int(request.args.get("idx", -1))
+        out = {}
+        for kind in ("raw", "inference"):
+            if s.video_path(idx, kind).exists():
+                out[kind] = {"state": "ready", "pct": 100}
+            else:
+                with s.lock:
+                    out[kind] = s.video_status.get(f"{idx}_{kind}",
+                                                   {"state": "none", "pct": 0})
+        return out
+    return _ev_guard(go)
+
+
+@shell.get("/api/review/video/file/<int:idx>/<kind>")
+def review_video_file(idx, kind):
+    def go():
+        from flask import send_file
+        ev = _ev()
+        s = ev.get_session(request.args.get("session_id"))
+        p = s.video_path(idx, kind)
+        if kind not in ("raw", "inference") or not p.exists():
+            raise ev.ApiError(404, "video not downloaded yet")
+        return send_file(p, mimetype="video/mp4", conditional=True)
+    return _ev_guard(go)
+
+
+@shell.get("/api/review/tags")
+def review_tags_get():
+    def go():
+        s = _ev().get_session(request.args.get("session_id"))
+        with s.lock:
+            return {"tags": {str(k): v for k, v in s.tags.items()},
+                    "tag_counts": s.tag_counts(), "tagged_events": len(s.tags)}
+    return _ev_guard(go)
+
+
+@shell.post("/api/review/tags")
+def review_tags_set():
+    def go():
+        ev = _ev()
+        p = request.get_json(silent=True) or {}
+        s = ev.get_session(p.get("session_id"))
+        return ev.set_tags(s, int(p.get("idx", -1)), p)
+    return _ev_guard(go)
+
+
+@shell.post("/api/review/tags/delete")
+def review_tags_delete():
+    def go():
+        ev = _ev()
+        p = request.get_json(silent=True) or {}
+        s = ev.get_session(p.get("session_id"))
+        return ev.delete_tag(s, p.get("name", ""))
+    return _ev_guard(go)
+
+
+@shell.get("/api/review/download/tagged")
+def review_download_tagged():
+    def go():
+        from flask import send_file
+        ev = _ev()
+        s = ev.get_session(request.args.get("session_id"))
+        import json as _json
+        filters = None
+        raw = request.args.get("filters")
+        if raw:
+            try:
+                parsed = _json.loads(raw)
+                if isinstance(parsed, list):
+                    filters = [str(x) for x in parsed]
+            except ValueError:
+                pass
+        out = ev.write_tagged_csv(s, filters)
+        return send_file(out, mimetype="text/csv", as_attachment=True,
+                         download_name=out.name)
+    return _ev_guard(go)
+
+
+@shell.get("/api/review/download/refreshed")
+def review_download_refreshed():
+    def go():
+        from flask import send_file
+        ev = _ev()
+        s = ev.get_session(request.args.get("session_id"))
+        out = s.dir / f"{os.path.splitext(s.filename)[0]}_refreshed.csv"
+        if not out.exists():
+            raise ev.ApiError(404, "Run the SAS refresh first.")
+        return send_file(out, mimetype="text/csv", as_attachment=True,
+                         download_name=out.name)
+    return _ev_guard(go)
+
+
+@shell.get("/api/review/state")
+def review_state():
+    return _ev().state_payload()
 
 
 # --------------------------------------------------------------------------- #

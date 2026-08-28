@@ -47,6 +47,31 @@ def stop():
 
 _SAS_EXPIRY_HOURS = 12  # short-lived: these URLs are used immediately
 
+# Some exports store bare container-relative blob paths instead of full URLs
+# (e.g. "ANSA-McAL/.../videos/raw/Camera_20260826-085104.mp4"). They live in
+# this container (Azure container names are lowercase, so the path's first
+# segment can't be one). Override with AZURE_DEFAULT_CONTAINER if that changes.
+_MEDIA_EXT = (".mp4", ".avi", ".mkv", ".mov", ".webm", ".jpg", ".jpeg", ".png")
+
+
+def default_container():
+    return _env("AZURE_DEFAULT_CONTAINER") or "visionai"
+
+
+def is_bare_blob_path(value):
+    """A container-relative blob path — no scheme, has slashes, media suffix."""
+    v = (value or "").strip()
+    if not v or v.startswith("#") or "://" in v or " " in v or "/" not in v:
+        return False
+    return v.lower().endswith(_MEDIA_EXT)
+
+
+def bare_to_url(value, account_name, container=None):
+    """'<path>.mp4' -> 'https://<account>.blob.core.windows.net/<container>/<path>.mp4'"""
+    container = container or default_container()
+    return (f"https://{account_name}.blob.core.windows.net/"
+            f"{container}/{value.strip().lstrip('/')}")
+
 
 def status():
     with _lock:
@@ -162,10 +187,15 @@ def _run(csv_path, column, frame_idx, batch):
     reader = csv.DictReader(io.StringIO(text.lstrip("\r\n")))
     reader.fieldnames = [h.lstrip("﻿").strip() for h in (reader.fieldnames or [])]
     urls = []
+    promoted = 0
     for row in reader:
         v = (row.get(column) or "").strip()
         if v.lower().startswith("http"):
             urls.append(v)
+        elif is_bare_blob_path(v):
+            # bare container-relative path -> full URL (then signed like the rest)
+            urls.append(bare_to_url(v, account_name))
+            promoted += 1
 
     out_dir = paths.FRAMES_ROOT / batch
     out_dir.mkdir(parents=True, exist_ok=True)
