@@ -375,46 +375,78 @@ def start_url_download(url: str) -> None:
     threading.Thread(target=_download_worker, args=(url,), daemon=True).start()
 
 
+def _fresh_blob_url(url: str) -> str:
+    """For Azure blob links of our storage account, return the URL with a
+    freshly minted SAS token — an expired token is the usual reason a stream
+    URL that worked yesterday suddenly 403s. Bare container-relative paths
+    ("ANSA-McAL/.../raw/Camera_x.mp4") are promoted to full URLs first. Any
+    other URL — or missing credentials — passes through unchanged."""
+    try:
+        from core import frame_extract
+        if not url.lower().startswith("http") and frame_extract.is_bare_blob_path(url):
+            name, key = frame_extract._sas_credentials()
+            return frame_extract.refresh_sas_url(
+                frame_extract.bare_to_url(url, name), name, key)
+        if ".blob.core.windows.net/" in url.lower():
+            name, key = frame_extract._sas_credentials()
+            return frame_extract.refresh_sas_url(url, name, key)
+    except Exception:
+        pass
+    return url
+
+
 def _download_worker(url: str) -> None:
     dest = _download_dest(url)
-    try:
-        DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            total = int(resp.headers.get("Content-Length") or 0)
-            got = 0
-            with open(dest, "wb") as fh:
-                while True:
-                    with download_lock:
-                        if download_state["url"] != url:  # superseded by a newer link
-                            _remove_file(str(dest))
-                            return
-                    chunk = resp.read(1 << 20)  # 1 MB
-                    if not chunk:
-                        break
-                    fh.write(chunk)
-                    got += len(chunk)
-                    if total:
+    last_exc = None
+    for _attempt in (1, 2):
+        # Blob URLs get a fresh SAS on EVERY attempt: proactively before the
+        # first try, and again on a retry when an error still occurs.
+        fetch = _fresh_blob_url(url)
+        try:
+            DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+            req = urllib.request.Request(fetch, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                total = int(resp.headers.get("Content-Length") or 0)
+                got = 0
+                with open(dest, "wb") as fh:
+                    while True:
                         with download_lock:
-                            download_state["progress"] = min(1.0, got / total)
-        with download_lock:
-            if download_state["url"] != url:
-                _remove_file(str(dest))
-                return
-            download_state.update({"path": str(dest), "status": "ready", "progress": 1.0})
-        # Switch the active source to the downloaded file and reload the capture.
-        with state_lock:
-            switch = state["source_mode"] == "url" and state["video_url"] == url
+                            if download_state["url"] != url:  # superseded by a newer link
+                                _remove_file(str(dest))
+                                return
+                        chunk = resp.read(1 << 20)  # 1 MB
+                        if not chunk:
+                            break
+                        fh.write(chunk)
+                        got += len(chunk)
+                        if total:
+                            with download_lock:
+                                download_state["progress"] = min(1.0, got / total)
+            with download_lock:
+                if download_state["url"] != url:
+                    _remove_file(str(dest))
+                    return
+                download_state.update({"path": str(dest), "status": "ready", "progress": 1.0})
+            # Switch the active source to the downloaded file and reload the capture.
+            with state_lock:
+                switch = state["source_mode"] == "url" and state["video_url"] == url
+                if switch:
+                    state["selected_video"] = str(dest)
             if switch:
-                state["selected_video"] = str(dest)
-        if switch:
-            release_capture()
-    except Exception as exc:  # network / HTTP / disk error
-        _remove_file(str(dest))
-        with download_lock:
-            if download_state["url"] == url:
-                download_state.update({"status": "error", "error": str(exc)})
-        runtime["last_error"] = f"Download failed: {exc}"
+                release_capture()
+            return
+        except Exception as exc:  # network / HTTP / disk error
+            _remove_file(str(dest))
+            with download_lock:
+                if download_state["url"] != url:
+                    return
+            last_exc = exc
+            if fetch == url:
+                break  # nothing refreshable about this URL — retrying won't help
+    with download_lock:
+        if download_state["url"] == url:
+            download_state.update({"status": "error", "error": str(last_exc)})
+    runtime["last_error"] = f"Download failed: {last_exc}"
 
 
 def url_download_path(url: str):
