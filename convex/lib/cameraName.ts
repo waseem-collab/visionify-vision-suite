@@ -7,7 +7,7 @@
 // Kept in sync with the Python version in cameras.py.
 export function guessCameraName(videoStem: string): string {
   const stem = videoStem || "";
-  const stripped = stem.replace(/_\d{6,8}([_-]\d{2,6})*$/, "");
+  const stripped = stem.replace(/_(?:\d{6,8}(?:[_-]\d{2,6})*|\d{4}(?:-\d{2}){2}(?:[-_]\d{2}){0,3})$/, "");
   return stripped || stem;
 }
 

@@ -475,10 +475,20 @@ def frames_start():
     if not column:
         return {"ok": False, "error": "Pick the column that holds the video URLs."}, 400
     batch = os.path.splitext(str(payload.get("name", "batch")))[0]
-    err = frame_extract.start(_FRAMES_UPLOAD, column, payload.get("frame", 24), batch)
+    err = frame_extract.start(_FRAMES_UPLOAD, column,
+                              payload.get("frames", payload.get("frame", "24")), batch,
+                              mode=str(payload.get("mode", "frames")),
+                              model_path=str(payload.get("model", "")))
     if err:
         return {"ok": False, "error": err}, 409
     return {"ok": True}
+
+
+@shell.get("/api/frames/models")
+def frames_models():
+    """The model pool, for the person-crops model picker."""
+    from core import frame_extract
+    return {"models": frame_extract.list_models()}
 
 
 @shell.post("/api/frames/stop")

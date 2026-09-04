@@ -40,9 +40,27 @@ __THEME__
   .row{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-top:18px;}
   .f{display:flex;flex-direction:column;gap:5px;}
   .f label{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--text-muted);font-weight:600;}
-  .f input{width:120px;height:38px;padding:8px 11px;font-size:13px;font-family:var(--mono);text-align:center;
-    color:var(--text);background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);}
-  .f input:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring);}
+  .combo{position:relative;width:200px;}
+  .combo input{width:100%;height:38px;padding:8px 11px;font-size:13px;color:var(--text);
+    background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);
+    transition:border-color .14s,box-shadow .14s;text-overflow:ellipsis;}
+  .combo input:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring);}
+  .combo-list{position:absolute;top:calc(100% + 5px);left:0;right:0;z-index:60;display:none;padding:4px;
+    background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);
+    max-height:300px;overflow-y:auto;box-shadow:0 12px 32px rgba(0,0,0,.45);scrollbar-width:thin;}
+  .combo.open .combo-list{display:block;}
+  .combo-list .op{padding:7px 10px;font-size:13px;color:var(--text);cursor:pointer;border-radius:6px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .combo-list .op:hover{background:var(--accent);color:var(--accent-fg);}
+  .fchips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:38px;min-width:240px;max-width:420px;
+    padding:4px 8px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);cursor:text;}
+  .fchips:focus-within{border-color:var(--accent);box-shadow:var(--ring);}
+  .fchip{display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:12.5px;font-weight:600;
+    color:var(--accent);background:var(--accent-soft);border:1px solid transparent;border-radius:999px;padding:2px 5px 2px 10px;}
+  .fchip button{background:none;border:none;color:var(--accent);cursor:pointer;font-size:14px;line-height:1;padding:0 3px;opacity:.65;}
+  .fchip button:hover{opacity:1;}
+  #framenum{flex:1;min-width:90px;height:26px;border:none;background:none;outline:none;
+    color:var(--text);font-family:var(--mono);font-size:13px;padding:0 3px;}
   .gobtn{height:38px;padding:0 22px;font-weight:600;font-size:13px;color:var(--accent-fg);background:var(--accent);
     border:none;border-radius:var(--r);cursor:pointer;}
   .gobtn:hover{filter:brightness(1.08);}
@@ -88,7 +106,15 @@ __THEME__
       <input class="hfilter" id="hfilter" placeholder="Type to filter headers…" autocomplete="off" spellcheck="false">
       <div class="chips" id="chips"></div>
       <div class="row">
-        <div class="f"><label for="framenum">Frame number</label><input id="framenum" type="number" min="0" step="1" value="24" inputmode="numeric"></div>
+        <div class="f"><label for="outmode">Output</label>
+          <div class="combo"><input id="outmode" value="Full frames" readonly style="cursor:pointer" autocomplete="off"><div class="combo-list"></div></div></div>
+        <div class="f" id="modelf" hidden><label for="modelsel">Model</label>
+          <div class="combo"><input id="modelsel" placeholder="Select model…" autocomplete="off" spellcheck="false"><div class="combo-list"></div></div></div>
+        <div class="f"><label for="framenum">Frame numbers</label>
+          <div class="fchips" id="fchips" title="Type a frame number and press Enter — it becomes a capsule">
+            <input id="framenum" type="text" inputmode="numeric" placeholder="frame + Enter" autocomplete="off" spellcheck="false">
+          </div>
+        </div>
         <button class="gobtn" id="go" disabled>Extract frames</button>
       </div>
     </div>
@@ -155,17 +181,85 @@ function selectHeader(h){
 }
 $('hfilter').addEventListener('input', renderChips);
 
+// ---- output mode + model picker ----
+function combo(input, optionsFn, onPick){
+  const box=input.parentElement, list=box.querySelector('.combo-list');
+  const norm=s=>String(s??'').toLowerCase().replace(/[^a-z0-9]+/g,'');
+  function render(showAll){
+    const q=showAll?'':norm(input.value);
+    list.innerHTML='';
+    const opts=optionsFn().filter(o=>!q||norm(o.label).includes(q));
+    opts.forEach(o=>{
+      const d=document.createElement('div');
+      d.className='op'; d.textContent=o.label;
+      d.addEventListener('mousedown',e=>{e.preventDefault();
+        input.value=o.label; box.classList.remove('open'); onPick(o);});
+      list.appendChild(d);
+    });
+    box.classList.toggle('open', opts.length>0);
+  }
+  input.addEventListener('focus',()=>{input.select();render(true)});
+  input.addEventListener('click',()=>{ if(!box.classList.contains('open')) render(true) });
+  input.addEventListener('input',()=>render(false));
+  input.addEventListener('blur',()=>box.classList.remove('open'));
+}
+
+let MODE='frames', MODELS=[], MODEL='';
+combo($('outmode'), ()=>[{label:'Full frames',value:'frames'},{label:'Person crops',value:'crops'}], o=>{
+  MODE=o.value;
+  $('modelf').hidden = MODE!=='crops';
+  if(MODE==='crops' && !MODELS.length) loadModels();
+});
+combo($('modelsel'), ()=>MODELS, o=>{ MODEL=o.value; });
+async function loadModels(){
+  try{
+    const j=await fetch('/api/frames/models').then(r=>r.json());
+    MODELS=j.models||[];
+    const def=MODELS.find(m=>/yolo26n\.pt$/i.test(m.value))||MODELS[0];
+    if(def && !MODEL){ MODEL=def.value; $('modelsel').value=def.label; }
+  }catch(e){}
+}
+
+// ---- frame-number capsules: type a number, Enter makes it a chip ----
+let FRAMES = [24];
+function renderFrames(){
+  document.querySelectorAll('#fchips .fchip').forEach(c => c.remove());
+  const inp = $('framenum');
+  FRAMES.forEach(f => {
+    const chip = document.createElement('span'); chip.className = 'fchip';
+    chip.appendChild(document.createTextNode(f));
+    const x = document.createElement('button'); x.type = 'button'; x.textContent = '×'; x.title = 'Remove';
+    x.addEventListener('click', () => { FRAMES = FRAMES.filter(v => v !== f); renderFrames(); });
+    chip.appendChild(x);
+    $('fchips').insertBefore(chip, inp);
+  });
+}
+function addFrameFromInput(){
+  const inp = $('framenum');
+  const v = parseInt(inp.value.trim(), 10);
+  if (!isNaN(v) && v >= 0 && !FRAMES.includes(v)){ FRAMES.push(v); FRAMES.sort((a, b) => a - b); renderFrames(); }
+  inp.value = '';
+}
+$('fchips').addEventListener('click', () => $('framenum').focus());
+$('framenum').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter'){ e.preventDefault(); addFrameFromInput(); }
+  else if (e.key === 'Backspace' && !e.target.value && FRAMES.length){ FRAMES.pop(); renderFrames(); }
+});
+renderFrames();
+
 // ---- run + poll ----
 let poll = null;
 $('go').addEventListener('click', async () => {
   if (!SELECTED) return;
+  addFrameFromInput();   // a typed-but-not-Entered number still counts
   $('go').disabled = true;
   $('prog').classList.add('show');
   $('pmsg').className = 'pmsg'; $('pmsg').textContent = 'Starting…'; $('perrs').textContent = '';
   $('pbar').style.width = '0';
   const res = await fetch('/api/frames/start', { method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ column: SELECTED, frame: Number($('framenum').value) || 24, name: CSVNAME }),
+    body: JSON.stringify({ column: SELECTED, frames: FRAMES.length ? FRAMES : [24], name: CSVNAME,
+                           mode: MODE, model: MODEL }),
   }).then(r => r.json()).catch(() => ({}));
   if (!res.ok){ $('pmsg').textContent = res.error || 'Could not start.'; $('pmsg').classList.add('err'); $('go').disabled = false; return; }
   $('stop').hidden = false; $('stop').disabled = false; $('stop').textContent = 'Stop';

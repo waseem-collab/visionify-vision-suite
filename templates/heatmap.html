@@ -60,6 +60,8 @@ __THEME__
   .combo-list .op.all{color:var(--text-muted);font-style:italic;}
   .combo-list .op.all:hover,.combo-list .op.all.hl{color:var(--accent-fg);}
   .combo-list .none{padding:8px 10px;font-size:12px;color:var(--text-muted);}
+  .combo-list .op.addnew{color:var(--ok);font-weight:600;}
+  .combo-list .op.addnew:hover,.combo-list .op.addnew.hl{background:var(--ok);color:var(--ok-fg);}
   .toolbar{display:flex;align-items:center;gap:14px;margin:14px 0 16px;flex-wrap:wrap;}
   .count{font-family:var(--mono);font-size:13px;color:var(--text);background:var(--surface-2);
     border:1px solid var(--border);border-radius:999px;padding:5px 13px;}
@@ -662,35 +664,54 @@ async function loadUnknown(){
 function freeCombo(input, optionsFn){
   const box = input.parentElement, list = box.querySelector('.combo-list');
   let visible = [], hl = -1;
+  function commit(v){
+    input.value = v; box.classList.remove('open');
+    input.dispatchEvent(new Event('change'));
+  }
   function render(){
-    const q = input.value.trim().toLowerCase();
-    visible = optionsFn().filter(o => !q || o.toLowerCase().includes(q));
-    hl = visible.length ? 0 : -1;
+    const q = input.value.trim();
+    const ql = q.toLowerCase();
+    const opts = optionsFn();
+    visible = opts.filter(o => !ql || o.toLowerCase().includes(ql));
     list.innerHTML = '';
-    visible.forEach((o, i) => {
+    // Typed something that isn't an existing entry? Offer to ADD it — this is
+    // how a brand-new company or site gets created from the prompt.
+    const isNew = q && !opts.some(o => o.toLowerCase() === ql);
+    if (isNew){
       const d = document.createElement('div');
-      d.className = 'op' + (i === hl ? ' hl' : '');
+      d.className = 'op addnew';
+      d.textContent = `+ Add "${q}"`;
+      d.addEventListener('mousedown', e => { e.preventDefault(); commit(q); });
+      list.appendChild(d);
+      visible = [q].concat(visible);   // Enter/arrows treat "add new" as row 0
+    }
+    hl = visible.length ? 0 : -1;
+    visible.slice(isNew ? 1 : 0).forEach((o, i) => {
+      const d = document.createElement('div');
+      const idx = i + (isNew ? 1 : 0);
+      d.className = 'op' + (idx === hl ? ' hl' : '');
       d.textContent = o;
-      d.addEventListener('mousedown', e => {
-        e.preventDefault(); input.value = o; box.classList.remove('open');
-        input.dispatchEvent(new Event('change'));
-      });
+      d.addEventListener('mousedown', e => { e.preventDefault(); commit(o); });
       list.appendChild(d);
     });
-    box.classList.toggle('open', visible.length > 0);
+    if (isNew) list.children[0].classList.toggle('hl', hl === 0);
+    box.classList.toggle('open', list.children.length > 0);
   }
   input.addEventListener('focus', render);
   input.addEventListener('input', render);
   input.addEventListener('blur', () => box.classList.remove('open'));
   input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter'){
+      e.preventDefault();
+      if (box.classList.contains('open') && hl >= 0) commit(visible[hl]);
+      else if (input.value.trim()) commit(input.value.trim());
+      return;
+    }
     if (!box.classList.contains('open')) return;
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp'){
       e.preventDefault();
       hl = Math.max(0, Math.min(visible.length - 1, hl + (e.key === 'ArrowDown' ? 1 : -1)));
       [...list.children].forEach((d, i) => { d.classList.toggle('hl', i === hl); if (i === hl) d.scrollIntoView({block:'nearest'}); });
-    } else if (e.key === 'Enter'){
-      e.preventDefault();
-      if (hl >= 0){ input.value = visible[hl]; box.classList.remove('open'); input.dispatchEvent(new Event('change')); }
     } else if (e.key === 'Escape'){ box.classList.remove('open'); }
   });
 }

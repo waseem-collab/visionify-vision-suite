@@ -15,8 +15,9 @@ import threading
 
 from core import convex_client, cropnames
 
-# Trailing date/time on a video stem, e.g. "_20260722-052339" or "_20260706_142252".
-_DATE_SUFFIX = re.compile(r"_\d{6,8}([_-]\d{2,6})*$")
+# Trailing date/time on a video stem, e.g. "_20260722-052339", "_20260706_142252"
+# or the dashed form "_2026-08-17-13-22-10".
+_DATE_SUFFIX = re.compile(r"_(?:\d{6,8}(?:[_-]\d{2,6})*|\d{4}(?:-\d{2}){2}(?:[-_]\d{2}){0,3})$")
 
 
 def guess_camera_name(video_stem):
