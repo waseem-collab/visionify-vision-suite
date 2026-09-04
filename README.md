@@ -55,7 +55,6 @@ core/                   shared modules
   paths.py              every directory and state file, in one place
   ports.py              picks a free port instead of failing on a busy one
   theme.py              the design system: palette, chrome, theme toggle
-  auth.py               the login gate (admin-set passwords per user)
   convex_client.py      connection to the Convex deployment (.env-driven)
   db_log.py             best-effort crop/annotation logging to Convex
   cameras.py            resolves a video name to its camera (registry cache)
@@ -69,7 +68,7 @@ apps/
 
 PPE/ppe_inference.py    PPE detection helpers used by the web app
 SM/sm_cropper.py        SM cropper helpers used by the web app
-templates/              landing page, login, heatmap, admin
+templates/              landing page, heatmap, and the tool pages
 convex/                 Convex functions + schema (crops, annotations, cameras)
 
 models/                 shared model pool — every tool lists from here
@@ -77,7 +76,8 @@ models/                 shared model pool — every tool lists from here
 sample_dataset/         16 images + labels, so the editor opens with something
 data/                   ALL generated output (gitignored):
   imports/              CVAT tasks, unpacked
-  validation/           ground truth pulled from CVAT for validate/compare
+  validation/           ground truth for validate/compare — CVAT exports, plus
+                        _local/ for datasets uploaded in the validation UI
   crops/ exports/       inference web app output
   person_crops/ crop_reports/ disagreement_frames/   crop tools output
 seed/                   local seed CSVs for the camera registry (gitignored)

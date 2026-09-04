@@ -4,9 +4,9 @@ WSGI entrypoint for the whole Vision Suite.
 
 Serve THIS (``wsgi:application`` or ``run:application``) — never ``apps/*.py``.
 Those modules each expose their own ``app``, but they are the individual tools;
-serving one gives you just that tool, with no login gate and no cross-tool
-routing. ``application`` here is the composed app: the landing page, all three
-tools mounted under /annotate, /webapp and /crop, and the login system.
+serving one gives you just that tool, with no cross-tool routing.
+``application`` here is the composed app: the landing page plus all three tools,
+mounted under /annotate, /webapp and /crop.
 
 IMPORTANT — run it as ONE process/worker. The suite keeps in-process state (the
 model cache, the annotated-frame cache, the prerender thread, the single-instance
@@ -22,6 +22,6 @@ worker, auto-reload and automatic free-port selection, is simply:
 
     python3 run.py        (or:  npm run dev)
 """
-from run import application  # the composed WSGI app (landing + tools + login)
+from run import application  # the composed WSGI app (landing + tools)
 
 __all__ = ["application"]

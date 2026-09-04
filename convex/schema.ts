@@ -5,15 +5,6 @@ import { v } from "convex/values";
 // That keeps the whole thing tiny (well inside the free tier) while carrying
 // everything a heatmap needs: where people were, per video and frame.
 export default defineSchema({
-  // Login allowlist — emails allowed to sign in with Google. The admin is NOT
-  // stored here (it's configured in .env and always allowed).
-  users: defineTable({
-    email: v.string(),
-    passwordHash: v.optional(v.string()), // set by the admin; hashed in the backend
-    addedBy: v.optional(v.string()),
-    addedAt: v.number(),
-  }).index("by_email", ["email"]),
-
   // The camera registry, seeded from cams-data.csv. One row per
   // (company, site, camera). Drives the heatmap's cascading filters and lets a
   // crop be tagged to a camera by matching the video name.

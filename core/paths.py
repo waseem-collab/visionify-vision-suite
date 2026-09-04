@@ -36,6 +36,10 @@ UPLOAD_MODELS_DIR = MODELS_DIR / "_uploaded"
 IMPORTS_DIR = Path(os.getenv("IMPORTS_DIR") or (DATA_DIR / "imports"))
 # Ground-truth pulled from CVAT for model validation / comparison runs.
 VAL_DIR = Path(os.getenv("VAL_DIR") or (DATA_DIR / "validation"))
+# Ground truth the user uploaded instead of pulling it from CVAT. Kept inside
+# VAL_DIR (under a name no task folder can take) so validation reads both the
+# same way; the leading underscore keeps it out of the "<task_id>_*" globs.
+LOCAL_GT_DIR = VAL_DIR / "_local"
 
 # --------------------------------------------------------------------------- #
 # Inference web app
@@ -72,7 +76,7 @@ CMP_HIST_FILE = STATE_DIR / "cmp_history.json"
 
 # Directories every tool expects to exist before it writes its first file.
 RUNTIME_DIRS = (
-    MODELS_DIR, UPLOAD_MODELS_DIR, IMPORTS_DIR, VAL_DIR,
+    MODELS_DIR, UPLOAD_MODELS_DIR, IMPORTS_DIR, VAL_DIR, LOCAL_GT_DIR,
     CROPS_ROOT, EXPORTS_ROOT,
     PERSON_CROPS_ROOT, REPORTS_ROOT, DISAGREE_ROOT, FRAMES_ROOT, CVAT_DL_ROOT,
     EVENT_REVIEW_ROOT,

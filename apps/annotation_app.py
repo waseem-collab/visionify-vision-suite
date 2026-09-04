@@ -1871,6 +1871,189 @@ def _val_fetch_task(task_id, status=None):
                 pass
 
 
+# --------------------------------------------------------------------------- #
+# Local ground truth — a YOLO dataset you upload instead of pulling a CVAT
+# project. On upload it is normalised into exactly the shape a CVAT export lands
+# in (images/ + labels/ + labels.txt) under LOCAL_GT_DIR, so everything
+# downstream — indexing, scoring, the per-class image viewer — is identical and
+# never has to care where the ground truth came from.
+# --------------------------------------------------------------------------- #
+LOCAL_GT_DIR = str(paths.LOCAL_GT_DIR)
+# Wider than IMG_EXTS: hand-built datasets carry formats CVAT never exports.
+DS_IMG_EXTS = IMG_EXTS + (".bmp", ".webp")
+# .txt files that describe the dataset rather than label one image.
+DS_META_TXT = {"labels.txt", "classes.txt", "obj.names", "train.txt", "val.txt",
+               "valid.txt", "test.txt", "obj.data", "readme.txt", "notes.txt"}
+
+
+def _ds_names_from_yaml(path):
+    """`names` out of a YOLO data.yaml — either a list or an index->name map."""
+    try:
+        import yaml
+        with open(path, encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh) or {}
+        names = doc.get("names")
+        if isinstance(names, dict):
+            return [str(names[k]) for k in sorted(names, key=lambda k: int(k))]
+        if isinstance(names, list):
+            return [str(n) for n in names]
+    except Exception:
+        pass
+    return []
+
+
+def _safe_extract(zf, dest):
+    """Extract a zip, skipping any entry whose path escapes `dest` (zip-slip)."""
+    import shutil
+    base = os.path.abspath(dest)
+    for m in zf.infolist():
+        if m.is_dir():
+            continue
+        target = os.path.abspath(os.path.join(base, m.filename.replace("\\", "/")))
+        try:
+            if os.path.commonpath([base, target]) != base:
+                continue
+        except ValueError:
+            continue
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with zf.open(m) as src, open(target, "wb") as out:
+            shutil.copyfileobj(src, out)
+
+
+def _normalise_dataset(src, out_dir):
+    """Fold an unpacked upload into out_dir as images/ + labels/ + labels.txt.
+
+    Handles the layouts people actually have: images/ + labels/ (with or without
+    train/val subfolders), a flat folder with each .txt beside its image, or a
+    CVAT-style export. An image with no label file is kept — in YOLO that is a
+    background image, and scoring it is how false positives get caught.
+    Returns (n_images, class_names)."""
+    import shutil
+    img_out, lbl_out = os.path.join(out_dir, "images"), os.path.join(out_dir, "labels")
+    os.makedirs(img_out, exist_ok=True)
+    os.makedirs(lbl_out, exist_ok=True)
+
+    images, labels, yamls, names = [], {}, [], []
+    for root, _, files in os.walk(src):
+        for f in files:
+            full = os.path.join(root, f)
+            low = f.lower()
+            ext = os.path.splitext(low)[1]
+            if ext in DS_IMG_EXTS:
+                images.append(full)
+            elif low in ("labels.txt", "classes.txt", "obj.names"):
+                if not names:
+                    try:
+                        with open(full, encoding="utf-8", errors="replace") as fh:
+                            names = [ln.strip() for ln in fh if ln.strip()]
+                    except OSError:
+                        pass
+            elif ext == ".txt" and low not in DS_META_TXT:
+                key = os.path.splitext(os.path.relpath(full, src))[0].replace(os.sep, "/")
+                labels[key] = full
+            elif ext in (".yaml", ".yml"):
+                yamls.append(full)
+    for y in yamls:
+        if names:
+            break
+        names = _ds_names_from_yaml(y)
+
+    # last-resort match: a label whose *stem* is unique in the whole upload
+    by_stem = {}
+    for key, path in labels.items():
+        stem = key.rsplit("/", 1)[-1]
+        by_stem[stem] = None if stem in by_stem else path
+
+    n, max_cls, used = 0, -1, set()
+    for full in sorted(images):
+        rel = os.path.splitext(os.path.relpath(full, src))[0].replace(os.sep, "/")
+        parts = rel.split("/")
+        cands = [rel]
+        for i, p in enumerate(parts[:-1]):          # images/foo.jpg -> labels/foo.txt
+            if p.lower() == "images":
+                cands.append("/".join(parts[:i] + ["labels"] + parts[i + 1:]))
+        lp = next((labels[c] for c in cands if c in labels), None) \
+            or by_stem.get(parts[-1])
+
+        base = os.path.basename(full)
+        if base.lower() in used:                    # same name in two subsets
+            base = _safe_name(rel) + os.path.splitext(base)[1]
+        used.add(base.lower())
+        try:
+            shutil.move(full, os.path.join(img_out, base))
+        except OSError:
+            continue
+        n += 1
+        if not lp:
+            continue
+        try:
+            with open(lp, encoding="utf-8", errors="replace") as fh:
+                txt = fh.read()
+        except OSError:
+            continue
+        if not txt.strip():
+            continue
+        with open(os.path.join(lbl_out, os.path.splitext(base)[0] + ".txt"),
+                  "w", encoding="utf-8") as fh:
+            fh.write(txt)
+        for line in txt.splitlines():               # widest class index actually used
+            bits = line.split()
+            if bits:
+                try:
+                    max_cls = max(max_cls, int(float(bits[0])))
+                except ValueError:
+                    pass
+
+    # No names file anywhere, or one that stops short of the indices in use:
+    # fill in placeholders so every label can still be mapped in the UI.
+    while len(names) <= max_cls:
+        names.append(f"class_{len(names)}")
+    with open(os.path.join(out_dir, "labels.txt"), "w", encoding="utf-8") as fh:
+        fh.write("\n".join(names) + "\n")
+    return n, names
+
+
+def _local_dataset_dir(ds_id):
+    """Absolute path of an uploaded dataset, or None if the id is unknown or
+    tries to point outside LOCAL_GT_DIR."""
+    ds_id = (ds_id or "").strip()
+    if not ds_id or ds_id != _safe_name(ds_id):
+        return None
+    d = os.path.abspath(os.path.join(LOCAL_GT_DIR, ds_id))
+    base = os.path.abspath(LOCAL_GT_DIR)
+    if os.path.dirname(d) != base or not os.path.isdir(d):
+        return None
+    return d
+
+
+def _local_dataset_meta(d):
+    """The .dataset.json written at upload time, back-filled from disk for a
+    folder that predates it (or lost it)."""
+    meta = {}
+    try:
+        with open(os.path.join(d, ".dataset.json"), encoding="utf-8") as fh:
+            meta = json.load(fh) or {}
+    except (OSError, ValueError):
+        pass
+    meta.setdefault("id", os.path.basename(d))
+    meta.setdefault("name", meta["id"])
+    if not meta.get("classes"):
+        meta["classes"] = _classes_in(d)
+    if not meta.get("images"):
+        img_dir = os.path.join(d, "images")
+        meta["images"] = len(os.listdir(img_dir)) if os.path.isdir(img_dir) else 0
+    return meta
+
+
+def _local_datasets():
+    """Every uploaded dataset, newest first."""
+    out = []
+    for d in sorted(glob.glob(os.path.join(LOCAL_GT_DIR, "*")), reverse=True):
+        if os.path.isdir(os.path.join(d, "images")):
+            out.append(_local_dataset_meta(d))
+    return out
+
+
 def _iou(a, b):
     """IoU of two normalised YOLO boxes {cx,cy,w,h}."""
     ax1, ay1 = a["cx"] - a["w"] / 2, a["cy"] - a["h"] / 2
@@ -2044,36 +2227,57 @@ def _set_val(**kw):
         _val_job.update(kw)
 
 
+def _index_gt_dir(d, classes):
+    """Index ONE prepared ground-truth folder (images/ + labels/ + labels.txt) into
+    the flat item list the scorer walks. The folder's own classes are matched to the
+    run's class list by name, so a folder that numbers its classes differently still
+    lines up; anything with no counterpart is dropped."""
+    lower = {str(x).strip().lower(): i for i, x in enumerate(classes)}
+    gt_to_proj = {}
+    for gi, gn in enumerate(_classes_in(d)):
+        pi = lower.get(str(gn).strip().lower())
+        if pi is not None:
+            gt_to_proj[gi] = pi
+    img_dir, lbl_dir = os.path.join(d, "images"), os.path.join(d, "labels")
+    items = []
+    for img in (sorted(os.listdir(img_dir)) if os.path.isdir(img_dir) else []):
+        stem = os.path.splitext(img)[0]
+        gts = []
+        for b in _read_label_file(os.path.join(lbl_dir, stem + ".txt")):
+            ci = gt_to_proj.get(int(b["cls"]))
+            if ci is None:
+                continue
+            gts.append({"cls": ci, "cx": b["cx"], "cy": b["cy"],
+                        "w": b["w"], "h": b["h"]})
+        full = os.path.join(img_dir, img)
+        items.append({"img": img, "path": full,
+                      "rel": os.path.relpath(full, VAL_DIR), "gts": gts})
+    return items
+
+
 def _prepare_gt(task_ids, classes, say=None):
     """Download (read-only) and index the ground truth ONCE, as a flat list of images
     with their GT boxes. Shared by validation and comparison, so two models are always
     scored against byte-identical data."""
     n = len(task_ids)
-    lower = {str(x).strip().lower(): i for i, x in enumerate(classes)}
     items = []
     for ti, tid in enumerate(task_ids, 1):
         if say:
             say(f"task {ti}/{n}: fetching ground truth…")
         d = _val_fetch_task(tid, status=(lambda m: say(f"[{ti}/{n}] {m}")) if say else None)
-        img_dir, lbl_dir = os.path.join(d, "images"), os.path.join(d, "labels")
-        gt_to_proj = {}
-        for gi, gn in enumerate(_classes_in(d)):
-            pi = lower.get(str(gn).strip().lower())
-            if pi is not None:
-                gt_to_proj[gi] = pi
-        for img in (sorted(os.listdir(img_dir)) if os.path.isdir(img_dir) else []):
-            stem = os.path.splitext(img)[0]
-            gts = []
-            for b in _read_label_file(os.path.join(lbl_dir, stem + ".txt")):
-                ci = gt_to_proj.get(int(b["cls"]))
-                if ci is None:
-                    continue
-                gts.append({"cls": ci, "cx": b["cx"], "cy": b["cy"],
-                            "w": b["w"], "h": b["h"]})
-            full = os.path.join(img_dir, img)
-            items.append({"img": img, "path": full,
-                          "rel": os.path.relpath(full, VAL_DIR), "gts": gts})
+        items.extend(_index_gt_dir(d, classes))
     return items
+
+
+def _prepare_gt_local(ds_id, classes, say=None):
+    """The same, for an uploaded dataset: nothing to download — it was normalised
+    into the CVAT export's shape when it was uploaded."""
+    d = _local_dataset_dir(ds_id)
+    if not d:
+        raise RuntimeError("that dataset is no longer on disk — upload it again")
+    if say:
+        say("reading local dataset…")
+    return _index_gt_dir(d, classes)
 
 
 def _assemble_metrics(classes, gt_count, tp, fp, det_pool, fp_dup=None, fp_bg=None):
@@ -2199,10 +2403,13 @@ def _score_model(model_path, mapping, items, classes, conf, iou_thr, contain,
 
 
 def _do_validate(model_path, project_id, task_ids, classes, conf, iou_thr, mapping,
-                 contain=True, dedup=False, config=None):
+                 contain=True, dedup=False, config=None, source="cvat", dataset=None):
     try:
         _set_val(state="loading", message="fetching ground truth…", n_tasks=len(task_ids))
-        items = _prepare_gt(task_ids, classes, say=lambda m: _set_val(message=m))
+        if source == "local":
+            items = _prepare_gt_local(dataset, classes, say=lambda m: _set_val(message=m))
+        else:
+            items = _prepare_gt(task_ids, classes, say=lambda m: _set_val(message=m))
         _set_val(state="scoring", total=len(items), done=0, message="loading model…")
         m, per_image, ms = _score_model(
             model_path, mapping, items, classes, conf, iou_thr, contain, dedup,
@@ -2221,7 +2428,9 @@ def _do_validate(model_path, project_id, task_ids, classes, conf, iou_thr, mappi
                        "model": (config or {}).get("model_name") or os.path.basename(model_path),
                        "name": (config or {}).get("name") or "",
                        "model_file": os.path.basename(model_path),
-                       "project_id": project_id})
+                       "project_id": project_id, "source": source,
+                       "dataset": dataset or "",
+                       "dataset_name": (config or {}).get("dataset_name") or ""})
         import time
         finished_at = time.strftime("%Y-%m-%d %H:%M")
         run_id = str(int(time.time() * 1000))
@@ -2541,21 +2750,125 @@ def api_val_delete_model():
     return jsonify({"ok": True})
 
 
+@app.route("/api/val/upload_dataset", methods=["POST"])
+def api_val_upload_dataset():
+    """Accept a local YOLO dataset — either one .zip or every file of a picked
+    folder — and store it, normalised, under LOCAL_GT_DIR. Purely local: nothing
+    here talks to CVAT."""
+    import shutil
+    import tempfile
+    import time
+    import zipfile
+    files = request.files.getlist("files")
+    if not files:
+        return jsonify({"error": "no files"}), 400
+    name = (request.form.get("name") or "").strip()
+    tmp = tempfile.mkdtemp(prefix="val_ds_")
+    out_dir = None
+    try:
+        single_zip = len(files) == 1 and (files[0].filename or "").lower().endswith(".zip")
+        for f in files:
+            fn = (f.filename or "").replace("\\", "/")
+            if not fn or fn.endswith("/"):
+                continue
+            if single_zip:
+                zp = os.path.join(tmp, "upload.zip")
+                f.save(zp)
+                with zipfile.ZipFile(zp) as z:
+                    _safe_extract(z, os.path.join(tmp, "unzipped"))
+                os.remove(zp)
+                name = name or os.path.splitext(os.path.basename(fn))[0]
+                continue
+            # A picked folder: the browser sends each file under its path inside
+            # the folder, which is how the images/labels layout survives.
+            parts = [p for p in fn.split("/") if p not in ("", ".", "..")]
+            if not parts:
+                continue
+            dest = os.path.join(tmp, *parts)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            f.save(dest)
+            if not name and len(parts) > 1:
+                name = parts[0]
+        ds_id = f"{_safe_name(name or 'dataset')}_{time.strftime('%Y%m%d-%H%M%S')}"
+        out_dir = os.path.join(LOCAL_GT_DIR, ds_id)
+        os.makedirs(out_dir, exist_ok=True)
+        n, classes = _normalise_dataset(tmp, out_dir)
+        if not n:
+            shutil.rmtree(out_dir, ignore_errors=True)
+            return jsonify({"error": "no images found in that upload — expected a YOLO "
+                                     "dataset (images/ + labels/, or the .txt beside "
+                                     "each image)"}), 400
+        meta = {"id": ds_id, "name": name or ds_id, "images": n, "classes": classes,
+                "created": time.strftime("%Y-%m-%d %H:%M")}
+        try:
+            with open(os.path.join(out_dir, ".dataset.json"), "w", encoding="utf-8") as fh:
+                json.dump(meta, fh)
+        except OSError:
+            pass
+        return jsonify(dict(meta, ok=True))
+    except zipfile.BadZipFile:
+        if out_dir:
+            shutil.rmtree(out_dir, ignore_errors=True)
+        return jsonify({"error": "that .zip could not be read"}), 400
+    except Exception as e:
+        if out_dir:
+            shutil.rmtree(out_dir, ignore_errors=True)
+        return jsonify({"error": str(e)}), 500
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@app.route("/api/val/datasets")
+def api_val_datasets():
+    """Datasets uploaded earlier, so a big one is uploaded once and reused."""
+    return jsonify({"datasets": _local_datasets()})
+
+
+@app.route("/api/val/delete_dataset", methods=["POST"])
+def api_val_delete_dataset():
+    """Delete an uploaded dataset. Only folders under LOCAL_GT_DIR can go — a
+    CVAT task folder cached beside it is never touched."""
+    import shutil
+    d = _local_dataset_dir((request.get_json(force=True, silent=True) or {}).get("id", ""))
+    if not d:
+        return jsonify({"error": "dataset not found"}), 404
+    shutil.rmtree(d, ignore_errors=True)
+    return jsonify({"ok": True})
+
+
 @app.route("/api/val/run", methods=["POST"])
 def api_val_run():
     data = request.get_json(force=True) or {}
     model_path = _safe_model_path(data.get("model", ""))
     if not model_path:
         return jsonify({"error": "invalid model"}), 400
+    # Ground truth comes from exactly one place: a CVAT project, or a dataset
+    # uploaded here. The rest of the run is identical either way.
+    source = "local" if str(data.get("source") or "cvat").lower() == "local" else "cvat"
     project_id = data.get("project_id")
     task_ids = data.get("task_ids") or []
-    if not project_id:
-        return jsonify({"error": "select a ground-truth project"}), 400
-    if not task_ids:
-        return jsonify({"error": "select at least one task"}), 400
+    dataset = (data.get("dataset") or "").strip()
+    dataset_name = ""
     classes = data.get("classes") or []
-    if not classes:
-        return jsonify({"error": "no project classes"}), 400
+    if source == "local":
+        ds_dir = _local_dataset_dir(dataset)
+        if not ds_dir:
+            return jsonify({"error": "upload or pick a local dataset"}), 400
+        meta = _local_dataset_meta(ds_dir)
+        dataset_name = meta.get("name") or dataset
+        # the dataset on disk is the authority on its own classes, so the mapping
+        # can never be scored against a stale list the page was holding
+        classes = meta.get("classes") or []
+        project_id, task_ids = None, []
+        if not classes:
+            return jsonify({"error": "that dataset has no classes"}), 400
+    else:
+        if not project_id:
+            return jsonify({"error": "select a ground-truth project"}), 400
+        if not task_ids:
+            return jsonify({"error": "select at least one task"}), 400
+        if not classes:
+            return jsonify({"error": "no project classes"}), 400
     try:
         conf = float(data.get("conf", 0.4) or 0.4)
     except (TypeError, ValueError):
@@ -2574,6 +2887,8 @@ def api_val_run():
     run_name = (data.get("name") or "").strip()[:80]
     config = {"model": data.get("model"), "model_name": display, "name": run_name,
               "model_file": os.path.basename(model_path),
+              "source": source, "dataset": dataset if source == "local" else "",
+              "dataset_name": dataset_name,
               "project_id": project_id, "task_ids": task_ids, "classes": list(classes),
               "conf": conf, "iou": iou_thr, "contain": contain, "dedup": dedup,
               "mapping": {str(k): v for k, v in mapping.items()}}
@@ -2585,7 +2900,7 @@ def api_val_run():
                         error=None, config=config, finished_at=None)
     threading.Thread(target=_do_validate,
                      args=(model_path, project_id, task_ids, list(classes), conf, iou_thr,
-                           mapping, contain, dedup, config),
+                           mapping, contain, dedup, config, source, dataset),
                      daemon=True).start()
     return jsonify({"started": True, "tasks": len(task_ids)})
 
@@ -2612,6 +2927,8 @@ def api_val_history():
                     "name": r.get("name") or c.get("name") or "",
                     "model": r.get("model") or c.get("model_name"),
                     "model_file": r.get("model_file") or c.get("model_file") or "",
+                    "source": r.get("source") or c.get("source") or "cvat",
+                    "dataset_name": r.get("dataset_name") or c.get("dataset_name") or "",
                     "project_id": r.get("project_id"), "tasks": r.get("tasks"),
                     "images": r.get("images"), "conf": r.get("conf"), "iou": r.get("iou"),
                     "map50": o.get("map50"), "precision": o.get("precision"),
@@ -2975,6 +3292,25 @@ __THEME_TOKENS__
   .dropzone:hover,.dropzone.over{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);}
   .dropzone .dz-main{font-size:13px;color:var(--text);}
   .dropzone .dz-sub{font-size:11.5px;}
+  /* where the ground truth comes from — CVAT or a local dataset, never both */
+  .srcpick{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  .modal-body label.srcopt{display:flex;flex-direction:column;gap:3px;padding:10px 12px;
+    cursor:pointer;position:relative;
+    background:var(--bg);border:1px solid var(--border-2);border-radius:var(--r);
+    text-transform:none;letter-spacing:normal;font-weight:500;margin-top:0;color:var(--text);
+    transition:border-color .14s,background .14s;}
+  .srcopt:hover{border-color:var(--accent);}
+  .srcopt input{position:absolute;opacity:0;width:0;height:0;pointer-events:none;}
+  .srcopt .so-t{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--text);}
+  .srcopt .so-t::before{content:"";width:13px;height:13px;flex:none;border-radius:50%;
+    border:2px solid var(--border-2);background:var(--surface);
+    transition:border-color .14s,box-shadow .14s;}
+  .srcopt .so-s{font-size:11px;color:var(--text-muted);padding-left:21px;line-height:1.45;}
+  .srcopt.on{border-color:var(--accent);background:var(--accent-soft);}
+  .srcopt.on .so-t::before{border-color:var(--accent);box-shadow:inset 0 0 0 3px var(--accent);}
+  .dsprog{height:4px;border-radius:999px;background:var(--surface-2);overflow:hidden;margin-top:8px;}
+  .dsprog i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s;}
+  .dshint{font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.5;}
   .val-model{display:flex;align-items:center;gap:9px;padding:9px 11px;margin-top:2px;
     background:var(--ok-soft);border:1px solid rgba(52,211,153,.35);border-radius:var(--r);
     font-size:12.5px;color:var(--text);}
@@ -3365,7 +3701,7 @@ __THEME_TOKENS__
       <div class="home-card val" onclick="enterVal()">
         <div class="hc-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6.5v5c0 4.6 3.4 8.6 8 9.5 4.6-.9 8-4.9 8-9.5v-5z"/><path d="m9 12 2 2 4-4"/></svg></div>
         <div class="hc-title">Model validation</div>
-        <div class="hc-desc">Drop a <b>.pt</b> model and score it against a CVAT ground-truth project — precision, recall, F1, mAP. Read-only: the project is never changed.</div>
+        <div class="hc-desc">Drop a <b>.pt</b> model and score it against a CVAT ground-truth project <i>or</i> a dataset you upload — precision, recall, F1, mAP. Read-only: CVAT is never changed.</div>
       </div>
       <div class="home-card cmp" onclick="enterCmp()">
         <div class="hc-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M6 8H3l3-5 3 5H6zm0 0v6a2 2 0 0 0 2 2h1"/><path d="M18 8h-3l3-5 3 5h-3zm0 0v6a2 2 0 0 1-2 2h-1"/></svg></div>
@@ -3702,16 +4038,57 @@ __THEME_TOKENS__
         <input type="file" id="valfile" accept=".pt" style="display:none" onchange="valPickFile(this.files[0])">
         <div id="valmodel" class="val-model" style="display:none;"></div>
 
-        <label>Ground-truth project</label>
-        <div class="selrow">
-          <select id="valproj" onchange="valLoadTasks()"><option value="">— select project —</option></select>
-          <button onclick="valLoadProjects(true)" title="refresh projects"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></button>
+        <label>Ground truth</label>
+        <div class="srcpick">
+          <label class="srcopt on" id="valsrccvatopt">
+            <input type="radio" name="valsrc" value="cvat" checked onchange="valSetSource('cvat')">
+            <span class="so-t">CVAT project</span>
+            <span class="so-s">Pull tasks from CVAT (read-only)</span>
+          </label>
+          <label class="srcopt" id="valsrclocalopt">
+            <input type="radio" name="valsrc" value="local" onchange="valSetSource('local')">
+            <span class="so-t">Local dataset</span>
+            <span class="so-s">Upload a YOLO folder or .zip</span>
+          </label>
         </div>
-        <label>Tasks <span id="valtaskcount" class="aptaskcount"></span></label>
-        <div id="valtasklist" class="aptasks"><div class="apt-empty">— select a project first —</div></div>
-        <div class="aprow">
-          <button onclick="valSelectAll(true)">All</button>
-          <button onclick="valSelectAll(false)">None</button>
+
+        <div id="valcvatblock">
+          <label>Ground-truth project</label>
+          <div class="selrow">
+            <select id="valproj" onchange="valLoadTasks()"><option value="">— select project —</option></select>
+            <button onclick="valLoadProjects(true)" title="refresh projects"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></button>
+          </div>
+          <label>Tasks <span id="valtaskcount" class="aptaskcount"></span></label>
+          <div id="valtasklist" class="aptasks"><div class="apt-empty">— select a project first —</div></div>
+          <div class="aprow">
+            <button onclick="valSelectAll(true)">All</button>
+            <button onclick="valSelectAll(false)">None</button>
+          </div>
+        </div>
+
+        <div id="vallocalblock" style="display:none;">
+          <label>Dataset</label>
+          <div id="valdsdrop" class="dropzone" onclick="document.getElementById('valdszip').click()">
+            <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5-5 5 5"/><path d="M12 5v12"/></svg>
+            <div class="dz-main">Drop a dataset <b>.zip</b> here</div>
+            <div class="dz-sub">or click to browse</div>
+          </div>
+          <input type="file" id="valdszip" accept=".zip" style="display:none" onchange="valUploadZip(this.files[0])">
+          <input type="file" id="valdsdir" webkitdirectory directory multiple style="display:none" onchange="valUploadFolder(this.files)">
+          <div class="aprow">
+            <button onclick="document.getElementById('valdszip').click()">Choose .zip</button>
+            <button onclick="document.getElementById('valdsdir').click()">Choose folder…</button>
+          </div>
+          <div class="dsprog" id="valdsprogwrap" style="display:none;"><i id="valdsprog"></i></div>
+          <div id="valdschip" class="val-model" style="display:none;"></div>
+          <div class="dshint">YOLO layout: <b>images/</b> + <b>labels/</b> (train/val subfolders are fine), or
+            the <b>.txt</b> beside each image. Class names are read from <b>labels.txt</b>, <b>classes.txt</b>
+            or <b>data.yaml</b>. Images with no label file count as background.</div>
+          <label style="margin-top:12px;">Or reuse an upload <span class="valopt">optional</span></label>
+          <div class="selrow">
+            <select id="valdssel" onchange="valPickSaved()"><option value="">— select dataset —</option></select>
+            <button onclick="valLoadDatasets(true)" title="refresh datasets"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></button>
+          </div>
         </div>
         <div class="val-two">
           <div><label>Confidence</label><input id="valconf" type="number" min="0" max="1" step="0.05" value="0.4"></div>
@@ -5603,6 +5980,9 @@ function renderCcTable(res){
 // ---- Model validation (read-only against a CVAT ground-truth project) ----
 let valPoll=null, valModel=null, valGtClasses=[], valModelClasses=[], valLastConfig=null;
 let valCurRunId=null, valCurResult=null;   // which run the report on screen belongs to
+// Ground truth comes from ONE source per run: a CVAT project, or an uploaded
+// dataset. valDataset is the chosen upload; valDsList is null until first loaded.
+let valSource='cvat', valDataset=null, valDsList=null;
 function valMsg(t,el){ const e=document.getElementById(el||'valmsg'); if(e) e.textContent=t||''; }
 async function enterVal(){
   appMode='cvat'; applyMode();
@@ -5612,6 +5992,7 @@ async function enterVal(){
   jobDismiss('val');              // full view -> drop its pill
   valHistCount();                 // badge on the History button
   await valLoadProjects();
+  await valLoadDatasets();
   let s=null;
   try{ s=await fetch('/api/val/status?t='+Date.now()).then(r=>r.json()); }catch(e){}
   if(!s) return;
@@ -5631,6 +6012,14 @@ async function valPrefill(cfg){
     if(cfg.iou!=null) document.getElementById('valiou').value=cfg.iou;
     if(cfg.contain!=null) document.getElementById('valcontain').checked=!!cfg.contain;
     if(cfg.dedup!=null) document.getElementById('valdedup').checked=!!cfg.dedup;
+    valSetSource(cfg.source==='local' ? 'local' : 'cvat');
+    if(valSource==='local'){
+      const d=(valDsList||[]).find(x=>x.id===cfg.dataset);
+      if(!d){ valClearDataset(); return; }   // it was deleted since that run
+      const ds=document.getElementById('valdssel');
+      ds.value=d.id; syncDD(ds); valPickSaved();
+      return;
+    }
     const sel=document.getElementById('valproj');
     sel.value=String(cfg.project_id); syncDD(sel);
     if(!sel.value) return;                       // project no longer in the list
@@ -5750,6 +6139,27 @@ function vcPaint(id, im, items){
     ctx.fillStyle='#fff'; ctx.fillText(lab, x+4, ty+11);
   });
 }
+// ---- ground-truth source: CVAT project OR an uploaded dataset, never both ----
+function valSetSource(src){
+  valSource = (src==='local') ? 'local' : 'cvat';
+  const local = valSource==='local';
+  const r=document.querySelector('#valcfg input[name=valsrc][value="'+valSource+'"]');
+  if(r) r.checked=true;
+  document.getElementById('valsrccvatopt').classList.toggle('on', !local);
+  document.getElementById('valsrclocalopt').classList.toggle('on', local);
+  document.getElementById('valcvatblock').style.display  = local?'none':'';
+  document.getElementById('vallocalblock').style.display = local?'':'none';
+  // the read-only badge is a promise about CVAT — it says nothing about an upload
+  const ro=document.querySelector('#valview .val-ro'); if(ro) ro.style.display=local?'none':'';
+  valMsg('');
+  if(local){
+    valGtClasses=(valDataset&&valDataset.classes)||[];
+    if(valDsList===null) valLoadDatasets();
+  }else{
+    valGtClasses=[];                       // never score against the other source's classes
+    if(document.getElementById('valproj').value) valLoadTasks();
+  }
+}
 function valShowCfg(){ _valCard('cfg'); valMsg(''); }
 function valShowMap(){ _valCard('map'); }
 function valShowProg(){ _valCard('prog'); }
@@ -5770,7 +6180,7 @@ async function valShowHistory(){
   const runs=await valHistCount();
   if(!runs.length){ host.innerHTML='<div class="browse-empty">No past runs yet — validate a model and it will show up here.</div>'; return; }
   let h='<div class="val-sub">'+runs.length+' past run(s) — newest first. Click one to view its full report.</div>';
-  h+='<table class="valtab"><thead><tr><th>When</th><th>Run</th><th>Model</th><th>Project</th><th>Tasks</th>'
+  h+='<table class="valtab"><thead><tr><th>When</th><th>Run</th><th>Model</th><th>Ground truth</th><th>Tasks</th>'
     +'<th>Images</th><th>conf / IoU</th><th>mAP@50</th><th>Precision</th><th>Recall</th><th>F1</th>'
     +'<th title="TP / (TP + FP + FN)">Accuracy</th><th></th></tr></thead><tbody>';
   runs.forEach(r=>{
@@ -5778,8 +6188,11 @@ async function valShowHistory(){
       +'<td>'+escapeHtml(r.finished_at||'')+'</td>'
       +(r.name ? '<td class="runname">'+escapeHtml(r.name)+'</td>' : '<td class="dim">—</td>')
       +'<td title="'+escapeHtml(r.model_file||r.model||'')+'">'+escapeHtml(r.model||'')+'</td>'
-      +'<td>'+escapeHtml(String(r.project_id||''))+'</td>'
-      +'<td>'+(r.tasks||0)+'</td><td>'+(r.images||0)+'</td>'
+      +'<td>'+(r.source==='local'
+          ? escapeHtml(r.dataset_name||'local dataset')
+          : ('project '+escapeHtml(String(r.project_id||''))))+'</td>'
+      +'<td>'+(r.source==='local' ? '<span class="dim">—</span>' : (r.tasks||0))+'</td>'
+      +'<td>'+(r.images||0)+'</td>'
       +'<td class="dim">'+r.conf+' / '+r.iou+'</td>'
       +'<td><b>'+(r.map50||0).toFixed(3)+'</b></td>'
       +'<td>'+pct(r.precision||0)+'</td><td>'+pct(r.recall||0)+'</td><td>'+pct(r.f1||0)+'</td>'
@@ -5856,6 +6269,134 @@ async function valPickFile(f){
     valMsg('');
   }catch(e){ valMsg('upload failed'); }
 }
+// ---- local dataset: upload a .zip or a picked folder, or reuse an upload ----
+// Only files a YOLO dataset is made of are sent, so picking a folder that also
+// holds videos or weights doesn't push gigabytes through the browser.
+const VAL_DS_KEEP=/\.(jpg|jpeg|png|bmp|webp|txt|yaml|yml|names)$/i;
+function valDsUpload(fd, what){
+  return new Promise(resolve=>{
+    const wrap=document.getElementById('valdsprogwrap'), bar=document.getElementById('valdsprog');
+    wrap.style.display=''; bar.style.width='0%';
+    valMsg('uploading '+what+'…');
+    const xhr=new XMLHttpRequest();
+    xhr.open('POST','/api/val/upload_dataset');
+    xhr.upload.onprogress=e=>{                       // datasets are big — show real progress
+      if(!e.lengthComputable) return;
+      const p=Math.round(e.loaded/e.total*100);
+      bar.style.width=p+'%';
+      valMsg('uploading '+what+' — '+p+'%'+(p>=100?' · unpacking…':''));
+    };
+    xhr.onload=()=>{
+      wrap.style.display='none';
+      let r; try{ r=JSON.parse(xhr.responseText||'{}'); }catch(e){ r={error:'bad response'}; }
+      resolve(r);
+    };
+    xhr.onerror=()=>{ wrap.style.display='none'; resolve({error:'upload failed'}); };
+    xhr.send(fd);
+  });
+}
+async function valUploadZip(f){
+  if(!f) return;
+  document.getElementById('valdszip').value='';
+  if(!f.name.toLowerCase().endsWith('.zip')){ valMsg('that is not a .zip file'); return; }
+  const fd=new FormData();
+  fd.append('files', f, f.name);
+  fd.append('name', f.name.replace(/\.zip$/i,''));
+  valTookDataset(await valDsUpload(fd, f.name));
+}
+async function valUploadFolder(files){
+  const all=[...(files||[])];
+  document.getElementById('valdsdir').value='';
+  const keep=all.filter(f=>VAL_DS_KEEP.test(f.name));
+  if(!keep.length){ valMsg('no images or labels in that folder'); return; }
+  const fd=new FormData();
+  let root='';
+  keep.forEach(f=>{
+    const rel=(f.webkitRelativePath||f.name).replace(/\\/g,'/');
+    if(!root && rel.indexOf('/')>0) root=rel.split('/')[0];
+    fd.append('files', f, rel);                      // the path is what keeps the layout
+  });
+  if(root) fd.append('name', root);
+  const skipped=all.length-keep.length;
+  valTookDataset(await valDsUpload(fd, keep.length+' files'+(skipped?(' ('+skipped+' skipped)'):'')));
+}
+async function valTookDataset(r){
+  if(!r || r.error){ valMsg('upload failed: '+((r&&r.error)||'unknown error')); return; }
+  valDataset={id:r.id, name:r.name, images:r.images, classes:r.classes||[]};
+  valGtClasses=valDataset.classes;
+  valDatasetChip();
+  valMsg(valDataset.images+' images · '+valGtClasses.length+' classes: '
+    +valGtClasses.slice(0,6).join(', ')+(valGtClasses.length>6?'…':''));
+  await valLoadDatasets();
+}
+function valDatasetChip(){
+  const box=document.getElementById('valdschip');
+  if(!valDataset){ box.style.display='none'; return; }
+  box.innerHTML='<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="color:var(--ok);flex:none;"><polyline points="20 6 9 17 4 12"/></svg>'
+    +'<span class="vm-name">'+escapeHtml(valDataset.name||valDataset.id)+'</span>'
+    +'<span class="vm-size">'+(valDataset.images||0)+' imgs · '+((valDataset.classes||[]).length)+' cls</span>'
+    +'<button class="vm-del" title="delete this dataset from disk" onclick="valDeleteDataset()">'
+    +'<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>';
+  box.style.display='flex';
+}
+function valClearDataset(){
+  valDataset=null;
+  if(valSource==='local') valGtClasses=[];
+  document.getElementById('valdschip').style.display='none';
+  const sel=document.getElementById('valdssel'); if(sel){ sel.value=''; syncDD(sel); }
+}
+async function valLoadDatasets(){
+  const sel=document.getElementById('valdssel'); if(!sel) return [];
+  const prev=sel.value;
+  try{
+    const r=await fetch('/api/val/datasets?t='+Date.now()).then(r=>r.json());
+    valDsList=r.datasets||[];
+  }catch(e){ valDsList=valDsList||[]; }
+  sel.innerHTML='<option value="">'+(valDsList.length?'— select dataset —':'— nothing uploaded yet —')+'</option>'
+    +valDsList.map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name||d.id)
+      +' · '+(d.images||0)+' imgs · '+escapeHtml(d.created||'')+'</option>').join('');
+  sel.value=(valDataset&&valDataset.id)||prev||'';
+  if(sel.value && !valDsList.some(d=>d.id===sel.value)) sel.value='';
+  syncDD(sel);
+  return valDsList;
+}
+function valPickSaved(){
+  const d=(valDsList||[]).find(x=>x.id===document.getElementById('valdssel').value);
+  if(!d){ valClearDataset(); return; }
+  valDataset={id:d.id, name:d.name, images:d.images, classes:d.classes||[]};
+  valGtClasses=valDataset.classes;
+  valDatasetChip();
+  valMsg('');
+}
+async function valDeleteDataset(){
+  if(!valDataset) return;
+  if(!(await appConfirm('Delete the dataset "'+valDataset.name+'" from disk?\nPast runs scored on it keep their numbers, but their images will no longer open.',
+       {title:'Delete dataset', ok:'Delete', danger:true}))) return;
+  try{
+    const r=await fetch('/api/val/delete_dataset',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:valDataset.id})}).then(r=>r.json());
+    if(r.error){ valMsg('could not delete: '+r.error); return; }
+  }catch(e){ valMsg('delete failed'); return; }
+  valClearDataset();
+  await valLoadDatasets();
+  valMsg('dataset deleted — upload another to validate');
+}
+// ---- dataset drop zone: a .zip, or files dragged straight in ----
+(function(){
+  const dz=document.getElementById('valdsdrop'); if(!dz) return;
+  ['dragenter','dragover'].forEach(ev=>dz.addEventListener(ev,e=>{
+    e.preventDefault(); e.stopPropagation(); dz.classList.add('over'); }));
+  ['dragleave','drop'].forEach(ev=>dz.addEventListener(ev,e=>{
+    e.preventDefault(); e.stopPropagation(); dz.classList.remove('over'); }));
+  dz.addEventListener('drop',e=>{
+    const fs=[...((e.dataTransfer&&e.dataTransfer.files)||[])];
+    if(!fs.length) return;
+    if(fs.length===1 && fs[0].name.toLowerCase().endsWith('.zip')) return valUploadZip(fs[0]);
+    if(fs.some(f=>VAL_DS_KEEP.test(f.name))) return valUploadFolder(fs);
+    // a dropped folder arrives as one entry with no usable name — the picker handles those
+    valMsg('drop a dataset .zip, or use “Choose folder…” to pick a folder');
+  });
+})();
 async function valLoadProjects(refresh){
   const sel=document.getElementById('valproj'); const prev=sel.value;
   sel.innerHTML='<option value="">loading…</option>';
@@ -5902,9 +6443,15 @@ function valCheckedTasks(){
 }
 async function valNext(){
   if(!valModel){ valMsg('drop a .pt model first'); return; }
-  if(!document.getElementById('valproj').value){ valMsg('select a ground-truth project'); return; }
-  if(!valCheckedTasks().length){ valMsg('select at least one task'); return; }
-  if(!valGtClasses.length){ valMsg('this project has no labels'); return; }
+  if(valSource==='local'){
+    if(!valDataset){ valMsg('upload or pick a local dataset'); return; }
+    valGtClasses=valDataset.classes||[];
+    if(!valGtClasses.length){ valMsg('that dataset has no classes'); return; }
+  }else{
+    if(!document.getElementById('valproj').value){ valMsg('select a ground-truth project'); return; }
+    if(!valCheckedTasks().length){ valMsg('select at least one task'); return; }
+    if(!valGtClasses.length){ valMsg('this project has no labels'); return; }
+  }
   valMsg('reading model classes…');
   try{
     const r=await fetch('/api/modelclasses?model='+encodeURIComponent(valModel.path)
@@ -5939,10 +6486,13 @@ async function runValidation(){
     if(s.value!=='') mapping[s.getAttribute('data-mi')]=parseInt(s.value,10);
   });
   if(!Object.keys(mapping).length){ valMsg('map at least one class','valmsg2'); return; }
+  const local=valSource==='local';
   const body={ model:valModel.path, model_name:valModel.name,
     name:document.getElementById('valname').value.trim(),
-    project_id:document.getElementById('valproj').value,
-    task_ids:valCheckedTasks(), classes:valGtClasses, mapping,
+    source:valSource,
+    dataset:local ? (valDataset||{}).id||'' : '',
+    project_id:local ? '' : document.getElementById('valproj').value,
+    task_ids:local ? [] : valCheckedTasks(), classes:valGtClasses, mapping,
     conf:parseFloat(document.getElementById('valconf').value)||0.4,
     iou:parseFloat(document.getElementById('valiou').value)||0.5,
     contain:document.getElementById('valcontain').checked,
@@ -6074,8 +6624,11 @@ function renderValResult(res, finishedAt){
       +'</div>'
     +'</div>';
   if(res.name) h+='<div class="val-name">'+escapeHtml(res.name)+'</div>';
-  h+='<div class="val-sub">'+escapeHtml(res.model||'')+' &nbsp;·&nbsp; project '+escapeHtml(String(res.project_id||''))
-    +' &nbsp;·&nbsp; '+(res.tasks||0)+' task(s) &nbsp;·&nbsp; conf &ge; '+res.conf+' &nbsp;·&nbsp; IoU &ge; '+res.iou
+  h+='<div class="val-sub">'+escapeHtml(res.model||'')+' &nbsp;·&nbsp; '
+    +(res.source==='local'
+        ? ('dataset '+escapeHtml(res.dataset_name||res.dataset||'local'))
+        : ('project '+escapeHtml(String(res.project_id||''))+' &nbsp;·&nbsp; '+(res.tasks||0)+' task(s)'))
+    +' &nbsp;·&nbsp; conf &ge; '+res.conf+' &nbsp;·&nbsp; IoU &ge; '+res.iou
     +(res.contain ? ' <b>or contained</b>' : '')
     +(res.dedup ? ' &nbsp;·&nbsp; <b>duplicates merged (NMS)</b>' : '')
     +(finishedAt?(' &nbsp;·&nbsp; <b>last run '+escapeHtml(finishedAt)+'</b>'):'')
@@ -6803,7 +7356,8 @@ window.addEventListener('resize', ()=>{ if(img.complete){ fit(); draw(); } });
   updateThemeIcons();          // set the light/dark toggle icons
   showContinueCard(m);         // offer to resume the last session from the home page
   enhanceSelects(['classsel','cvatproj','aamode','apmodel',
-                  'approj','apmode','cvUploadProj','ccproj','clsproj','valproj','cmpproj']);  // styled dropdowns
+                  'approj','apmode','cvUploadProj','ccproj','clsproj','valproj','valdssel',
+                  'cmpproj']);  // styled dropdowns
   loadCvatProjects();          // populate the CVAT project dropdown in the background
   if(!count){ setStatus('no images in '+(m.path||'')+' — set a folder above'); return; }
   load(startIdx);

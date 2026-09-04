@@ -24,7 +24,6 @@ Run:  python3 run.py        (or: npm run dev)
 """
 import atexit
 import fcntl
-import html
 import os
 import sys
 import threading
@@ -35,12 +34,12 @@ from flask import Flask, Response, redirect, request
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
 from werkzeug.serving import run_simple
 
-from core import auth, convex_client, paths, ports, theme
+from core import convex_client, paths, ports, theme
 
 paths.ensure_dirs()
-# Load .env into os.environ NOW: auth reads AUTH_SECRET from the environment,
-# and leaving it to convex_client's lazy loader means a freshly (re)started
-# server can 401 valid session cookies until some Convex call happens first.
+# Load .env into os.environ NOW: the settings below (and the tools imported
+# next) read it at import time, and convex_client's lazy loader would otherwise
+# defer it until the first Convex call.
 convex_client.convex_url()
 
 # Importing the tools pulls in torch/ultralytics/opencv, so it takes a moment.
@@ -146,14 +145,8 @@ shell = Flask("vision_suite")
 
 
 def _render_landing():
-    email = auth.current_email() or ""
-    admin_link = ('<a class="admin" href="/admin">Manage users</a>'
-                  if auth.is_admin(email) else "")
-    user_menu = (f'<span class="usermenu"><span class="who">{html.escape(email)}</span>'
-                 f'{admin_link}<a href="/logout">Log out</a></span>') if email else ""
     page = LANDING_TEMPLATE.read_text(encoding="utf-8")
     return (page
-            .replace("__USER_MENU__", user_menu)
             .replace("__THEME__", theme.stylesheet())
             .replace("__THEME_SCRIPT__", theme.THEME_SCRIPT)
             .replace("__THEME_JS__", theme.THEME_JS)
@@ -844,104 +837,6 @@ def review_state():
     return _ev().state_payload()
 
 
-# --------------------------------------------------------------------------- #
-# Auth: login (password or Google), logout, and the admin allowlist page.
-# --------------------------------------------------------------------------- #
-def _render_template(name, **subs):
-    page = (paths.ROOT / "templates" / name).read_text(encoding="utf-8")
-    page = (page
-            .replace("__THEME__", theme.stylesheet())
-            .replace("__THEME_SCRIPT__", theme.THEME_SCRIPT)
-            .replace("__THEME_JS__", theme.THEME_JS)
-            .replace("__THEME_BUTTON__", theme.THEME_BUTTON))
-    for k, v in subs.items():
-        page = page.replace(k, v)
-    return page
-
-
-def _login_page(error=""):
-    err_html = f'<div class="err">{error}</div>' if error else ""
-    return _render_template("login.html", __ERROR__=err_html)
-
-
-@shell.get("/login")
-def login_get():
-    if auth.current_email():
-        return redirect("/")
-    return Response(_login_page(), mimetype="text/html")
-
-
-@shell.post("/login")
-def login_post():
-    email = request.form.get("email", "")
-    password = request.form.get("password", "")
-    if auth.check_password(email, password):
-        return auth.set_session(redirect("/"), email.strip().lower())
-    return Response(_login_page("Wrong email or password."), mimetype="text/html", status=401)
-
-
-@shell.get("/logout")
-def logout():
-    return auth.clear_session(redirect("/login"))
-
-
-def _require_admin():
-    email = auth.current_email()
-    return email if auth.is_admin(email) else None
-
-
-@shell.get("/admin")
-def admin_get():
-    if not _require_admin():
-        return redirect("/")
-    msg = {"added": ('<div class="msg ok">User saved. They can sign in with that email and password.</div>'),
-           "removed": ('<div class="msg ok">User removed.</div>'),
-           "bad": ('<div class="msg err">Enter a valid email and a password.</div>'),
-           "err": ('<div class="msg err">Couldn\'t reach the database. Try again.</div>'),
-           }.get(request.args.get("m", ""), "")
-    try:
-        users = auth.list_users()
-    except Exception:
-        users = []
-    admin = html.escape(auth.admin_email())
-    rows = [f'<tr><td>{admin}<span class="tag">admin</span></td><td class="act"></td></tr>']
-    for e in users:
-        esc = html.escape(e)
-        rows.append(
-            f'<tr><td>{esc}</td><td class="act">'
-            f'<form class="inline" method="post" action="/admin/users/remove">'
-            f'<input type="hidden" name="email" value="{esc}">'
-            f'<button class="rm" type="submit">Remove</button></form></td></tr>')
-    if not users:
-        rows.append('<tr><td colspan="2"><div class="empty">No other users yet. Add an email above.</div></td></tr>')
-    return Response(_render_template("admin.html", __MSG__=msg, __ROWS__="".join(rows)),
-                    mimetype="text/html")
-
-
-@shell.post("/admin/users/add")
-def admin_add():
-    if not _require_admin():
-        return redirect("/")
-    email = request.form.get("email", "")
-    password = request.form.get("password", "")
-    try:
-        ok = auth.add_user(email, password, by=auth.current_email())
-    except Exception:
-        return redirect("/admin?m=err")
-    return redirect("/admin?m=" + ("added" if ok else "bad"))
-
-
-@shell.post("/admin/users/remove")
-def admin_remove():
-    if not _require_admin():
-        return redirect("/")
-    try:
-        auth.remove_user(request.form.get("email", ""))
-    except Exception:
-        return redirect("/admin?m=err")
-    return redirect("/admin?m=removed")
-
-
 @shell.get("/__livereload__")
 def livereload_token():
     return START_TOKEN, 200, {"Content-Type": "text/plain"}
@@ -956,10 +851,6 @@ def _shell_livereload(resp):
 
 def build_application():
     _register_hooks()
-    # Gate every app: the shell and all three tools require a valid session. They
-    # share the AUTH_SECRET, so each verifies the same cookie independently.
-    for app in (shell, annotation_app.app, web_app.app, crop_balancer_app.app):
-        app.before_request(auth.gate)
     return DispatcherMiddleware(shell, {
         "/annotate": annotation_app.app,
         "/webapp": web_app.app,

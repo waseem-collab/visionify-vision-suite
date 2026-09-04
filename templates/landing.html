@@ -10,12 +10,6 @@ __THEME__
   html,body{margin:0;min-height:100%;}
   body{display:flex;flex-direction:column;}
   .corner{position:absolute;top:18px;right:18px;z-index:5;display:flex;align-items:center;gap:10px;}
-  .usermenu{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--text-muted);}
-  .usermenu .who{font-weight:600;color:var(--text);}
-  .usermenu a{color:var(--text-muted);text-decoration:none;border:1px solid var(--border-2);
-    border-radius:var(--r);padding:7px 11px;transition:color .14s,border-color .14s;}
-  .usermenu a:hover{color:var(--text);border-color:var(--accent);}
-  .usermenu a.admin{color:var(--accent);border-color:transparent;background:var(--accent-soft);}
   .wrap{flex:1;max-width:1080px;margin:0 auto;padding:72px 24px 40px;width:100%;}
   .logo{width:60px;height:60px;border-radius:16px;margin:0 0 18px;display:block;}
   h1{font-size:32px;margin:0 0 6px;font-weight:700;letter-spacing:-.5px;color:var(--text);}
@@ -52,7 +46,7 @@ __THEME__
 </style>
 </head>
 <body>
-  <div class="corner">__USER_MENU__ __THEME_BUTTON__</div>
+  <div class="corner">__THEME_BUTTON__</div>
   <div class="wrap">
     <svg class="logo" viewBox="0 0 64 64"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6ea8fe"/><stop offset="1" stop-color="#3b82f6"/></linearGradient></defs><rect width="64" height="64" rx="15" fill="url(#lg)"/><g stroke="#0a0a0a" stroke-width="3.4" stroke-linecap="round" fill="none" opacity=".88"><path d="M16 25v-7a2 2 0 0 1 2-2h7"/><path d="M48 25v-7a2 2 0 0 0-2-2h-7"/><path d="M16 39v7a2 2 0 0 0 2 2h7"/><path d="M48 39v7a2 2 0 0 1-2 2h-7"/></g><circle cx="32" cy="32" r="4.6" fill="#0a0a0a"/></svg>
     <h1>Vision Suite</h1>

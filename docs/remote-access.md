@@ -7,8 +7,9 @@ local video files). See the note at the bottom.
 
 Instead, keep it running **on your machine** and expose just its web interface
 through a tunnel. The models, videos and inference never leave your computer —
-the tunnel only forwards HTTPS web requests to `localhost:8000`. Your existing
-login gates who can get in, and the tunnel provides the TLS.
+the tunnel only forwards HTTPS web requests to `localhost:8000`. The tunnel
+provides the TLS; the app itself has **no login**, so anyone who has the URL has
+the whole suite — see the security notes below.
 
 ## Quick (temporary URL)
 
@@ -50,14 +51,14 @@ reboots (`cloudflared service install`).
 
 ## Security notes
 
-- Access is gated by the login you already have; passwords are hashed, sessions
-  are signed. Only add users you trust.
+- **The app has no access control of its own.** Anyone who can reach the URL can
+  use every tool on it — run inference, read your videos, write to the database.
+  The URL *is* the only secret.
 - The tunnel gives you HTTPS end-to-end (client → Cloudflare → localhost).
-- There's **no brute-force rate limiting** on `/login` yet. With a strong admin
-  password that's low risk, but don't share the URL more widely than needed, and
-  consider a Cloudflare Access policy on a named tunnel for a second gate.
-- Anyone who reaches the URL can *see* the login page. The trycloudflare URL is
-  random/unguessable but not secret once shared.
+- Put a gate in front of the tunnel before sharing it: a **Cloudflare Access**
+  policy on a named tunnel (email/SSO allowlist, free tier) is the usual answer.
+- A trycloudflare URL is random and unguessable, but it isn't secret once
+  shared — and it stays live until you stop the tunnel.
 
 ## Why not Vercel / serverless?
 
