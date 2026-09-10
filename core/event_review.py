@@ -619,6 +619,22 @@ def write_tagged_csv(s: Session, filters=None) -> Path:
     return out
 
 
+def write_export_csv(s: Session, idxs) -> Path:
+    """The export modal's CSV: exactly the given row indices, in the given
+    order (the client applies the review filters + sort and sends the result),
+    plus the review_tags column."""
+    with s.lock:
+        tags = dict(s.tags)
+    out = s.dir / f"{Path(s.filename).stem}_reviewed_export.csv"
+    with out.open("w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(s.headers + ["review_tags"])
+        for i in idxs:
+            if 0 <= i < len(s.rows):
+                w.writerow(s.rows[i] + ["|".join(tags.get(i, []))])
+    return out
+
+
 def state_payload():
     sid = CURRENT["sid"]
     if not sid or sid not in SESSIONS:

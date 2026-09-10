@@ -604,7 +604,6 @@ _FONT = cv2.FONT_HERSHEY_SIMPLEX
 COLOR_PERSON = (255, 170, 40)
 COLOR_PPE = (90, 220, 70)
 COLOR_SM = (80, 200, 255)
-COLOR_MANUAL = (235, 110, 200)
 COLOR_HUD_BG = (24, 26, 32)
 # Per-person PPE status chips: grey = class not detected, green = detected.
 COLOR_CHIP_OFF = (78, 82, 90)
@@ -823,16 +822,14 @@ def run_ppe(
             pconf = float(pbox.conf[0])
             process_person_region(x1, y1, x2, y2, f"person {pconf:.2f}")
 
-    # Manual boxes are user-drawn class annotations: draw them with their own
-    # label/color, don't treat them as persons or run PPE inside them.
+    # A user-drawn manual box IS a person box: run it through the same
+    # per-person pipeline as detections — person box + index, PPE inference
+    # inside it, and the per-class status strip. It also joins person_boxes,
+    # so per-person cropping / Ask-AI work on it like any detected person.
     for mb in manual_boxes:
         mx1, my1, mx2, my2 = map(int, mb[:4])
         cls_label = mb[4] if len(mb) > 4 and mb[4] else "manual"
-        mx1, my1, mx2, my2 = ppe_inference.clamp_box(mx1, my1, mx2, my2, w, h)
-        if mx2 <= mx1 or my2 <= my1:
-            continue
-        cv2.rectangle(annotated, (mx1, my1), (mx2, my2), COLOR_MANUAL, 2, cv2.LINE_AA)
-        draw_label_chip(annotated, mx1, my1, str(cls_label), COLOR_MANUAL, fg_color=(255, 255, 255))
+        process_person_region(mx1, my1, mx2, my2, str(cls_label))
 
     # When disabled, run the PPE model once across the whole frame.
     if not ppe_inside_person:
@@ -2921,6 +2918,11 @@ def api_crop():
                     x1_ratio, y1_ratio, x2_ratio, y2_ratio, class_name=class_name
                 )
                 save_path = save_person_crop_from_box(box, suffix=folder, subdir=folder)
+                # Evict this frame's cached render — the cache key doesn't know
+                # about manual boxes, so without this the reseek below would
+                # serve the stale pre-draw image and the box would never show.
+                with cache_lock:
+                    frame_cache.pop(frame_idx, None)
                 reseek_idx = frame_idx
             elif crop_type == "frame":
                 save_path = save_frame_image(runtime["last_raw_frame"], "SM")

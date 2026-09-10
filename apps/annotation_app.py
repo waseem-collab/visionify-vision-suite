@@ -442,14 +442,20 @@ def api_delete_many():
 # CVAT upload
 # --------------------------------------------------------------------------- #
 def _cvat_client():
-    """Create an authenticated CVAT SDK client (org-scoped). Caller closes it."""
+    """Create an authenticated CVAT SDK client (org-scoped). Caller closes it.
+    The login is retried on transient network errors (DNS blips etc.)."""
     if not (CVAT_URL and CVAT_USER and CVAT_PASS):
         raise RuntimeError("CVAT_URL / CVAT_USERNAME / CVAT_PASSWORD missing in .env")
-    from cvat_sdk import make_client
-    client = make_client(host=CVAT_URL, credentials=(CVAT_USER, CVAT_PASS))
-    if CVAT_ORG:
-        client.organization_slug = CVAT_ORG
-    return client
+    from core import cvat_sync as _net
+
+    def _connect():
+        from cvat_sdk import make_client
+        client = make_client(host=CVAT_URL, credentials=(CVAT_USER, CVAT_PASS))
+        if CVAT_ORG:
+            client.organization_slug = CVAT_ORG
+        return client
+
+    return _net.retry_call(_connect)
 
 
 def _build_yolo_zip(images, classes, lbl_dir, zip_path):
@@ -1032,7 +1038,8 @@ def _cvat_session():
     import requests
     if not (CVAT_URL and CVAT_USER and CVAT_PASS):
         raise RuntimeError("CVAT credentials missing in .env")
-    s = requests.Session()
+    from core import cvat_sync as _net
+    s = _net.mount_retries(requests.Session())
     if CVAT_ORG:
         s.headers.update({"X-Organization": CVAT_ORG})
     s.headers.update({"Referer": CVAT_URL})

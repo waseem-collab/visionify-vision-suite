@@ -43,6 +43,40 @@ def _env(key):
     return (os.environ.get(key) or "").strip()
 
 
+def mount_retries(session):
+    """Retry transient network failures (DNS blips like 'Temporary failure in
+    name resolution', dropped connects, 5xx) with backoff instead of dying on
+    the first attempt. Connect-level retries are always safe — the request
+    never reached the server."""
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+    retry = Retry(total=5, connect=4, read=1, status=2, backoff_factor=1.5,
+                  status_forcelist=(429, 502, 503, 504), allowed_methods=None)
+    session.mount("https://", HTTPAdapter(max_retries=retry))
+    session.mount("http://", HTTPAdapter(max_retries=retry))
+    return session
+
+
+def retry_call(fn, attempts=3, base_delay=2.0):
+    """Run ``fn`` retrying transient network errors (name resolution, refused/
+    dropped connections) with backoff. Non-network errors raise immediately."""
+    last = None
+    for i in range(attempts):
+        try:
+            return fn()
+        except Exception as exc:
+            text = repr(exc)
+            transient = any(k in text for k in (
+                "name resolution", "NameResolutionError", "NewConnectionError",
+                "Max retries exceeded", "Connection refused", "ConnectionResetError",
+                "Temporary failure"))
+            if not transient or i == attempts - 1:
+                raise
+            last = exc
+            time.sleep(base_delay * (i + 1))
+    raise last
+
+
 def _session():
     """Authenticated requests session (org-scoped) — same REST approach as the
     annotation studio; more reliable across CVAT versions than the SDK export."""
@@ -53,7 +87,7 @@ def _session():
     if not (url and user and pw):
         raise RuntimeError("CVAT_URL / CVAT_USERNAME / CVAT_PASSWORD missing in .env")
     url = url.rstrip("/")
-    s = requests.Session()
+    s = mount_retries(requests.Session())
     if org:
         s.headers.update({"X-Organization": org})
     s.headers.update({"Referer": url})

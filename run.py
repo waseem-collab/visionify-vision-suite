@@ -803,6 +803,35 @@ def review_tags_delete():
     return _ev_guard(go)
 
 
+@shell.post("/api/review/export")
+def review_export():
+    """Stage the filtered/sorted export the modal computed client-side."""
+    def go():
+        ev = _ev()
+        p = request.get_json(silent=True) or {}
+        s = ev.get_session(p.get("session_id"))
+        idxs = p.get("idxs")
+        if not isinstance(idxs, list) or not idxs:
+            raise ev.ApiError(400, "No rows match the selected filters.")
+        out = ev.write_export_csv(s, [int(i) for i in idxs])
+        return {"ok": True, "rows": len(idxs), "name": out.name}
+    return _ev_guard(go)
+
+
+@shell.get("/api/review/download/export")
+def review_download_export():
+    def go():
+        from flask import send_file
+        ev = _ev()
+        s = ev.get_session(request.args.get("session_id"))
+        out = s.dir / f"{os.path.splitext(s.filename)[0]}_reviewed_export.csv"
+        if not out.exists():
+            raise ev.ApiError(404, "Nothing exported yet.")
+        return send_file(out, mimetype="text/csv", as_attachment=True,
+                         download_name=out.name)
+    return _ev_guard(go)
+
+
 @shell.get("/api/review/download/tagged")
 def review_download_tagged():
     def go():

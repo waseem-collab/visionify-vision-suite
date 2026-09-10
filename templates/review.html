@@ -208,7 +208,8 @@ __THEME__
   .modal-b{padding:16px 18px;}
   .modal-b p{margin:0 0 12px;color:var(--text-muted);font-size:12.5px;line-height:1.5;}
   .modal-f{display:flex;align-items:center;gap:10px;padding:12px 18px;border-top:1px solid var(--border);}
-  .exlist{display:flex;flex-direction:column;gap:6px;max-height:300px;overflow-y:auto;}
+  .exfilters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;}
+  .exlist{display:flex;flex-direction:column;gap:6px;max-height:240px;overflow-y:auto;}
   .exrow{display:flex;align-items:center;gap:10px;padding:8px 11px;border:1px solid var(--border);
     border-radius:var(--r);cursor:pointer;font-size:13px;color:var(--text);transition:border-color .12s;}
   .exrow:hover{border-color:var(--accent);}
@@ -357,7 +358,13 @@ __THEME__
   <div class="modal">
     <div class="modal-h"><h3>Export CSV</h3><button class="x" id="ex_close" title="Close">×</button></div>
     <div class="modal-b">
-      <p>Tick what to include — rows matching any ticked bucket are exported, with a <code>review_tags</code> column. Everything is ticked by default.</p>
+      <p>Starts from the filters you have active in the review. Adjust anything — rows matching the event/AI filters AND any ticked tag bucket are exported (in the chosen sort order) with a <code>review_tags</code> column.</p>
+      <div class="exfilters">
+        <div class="combo" style="flex:1;min-width:150px"><input id="exf_sort" readonly style="cursor:pointer" autocomplete="off"><div class="combo-list"></div></div>
+        <button class="ghostbtn" id="exf_dir" style="height:38px;padding:0 13px;">↑</button>
+        <div class="combo" style="flex:1;min-width:150px"><input id="exf_event" readonly style="cursor:pointer" autocomplete="off"><div class="combo-list"></div></div>
+        <div class="combo" style="flex:1;min-width:140px"><input id="exf_ai" readonly style="cursor:pointer" autocomplete="off"><div class="combo-list"></div></div>
+      </div>
       <button class="ghostbtn" id="ex_all" style="height:30px;padding:0 12px;font-size:12.5px;margin-bottom:9px;">Deselect all</button>
       <div class="exlist" id="ex_list"></div>
     </div>
@@ -1070,22 +1077,29 @@ $('#taginput').addEventListener('keydown',e=>{
   if(e.key==='Escape'){ e.preventDefault(); $('#taginput').value=''; $('#taginput').blur() }
 });
 
-/* ---- export modal: a visible checklist of buckets (no dropdown).
-   Blanks + every review tag, all ticked by default; rows matching ANY ticked
-   bucket land in the CSV. ---- */
+/* ---- export modal: the review's filters (sort, events, AI, tagged-only via
+   the Blanks tick) + a checklist of tag buckets. Opens pre-filled from the
+   dock's current state; the matching rows are computed here and the server
+   writes exactly those, in this order. ---- */
 let EXSEL=new Set();
+let EXF={sortBy:'',sortDir:1,event:'',ai:''};
 function exOptions(){
   const untagged=S.all.filter(e=>!(e.tags||[]).length).length;
   const opts=[{label:'Blanks — untagged', value:'blank', count:untagged}];
   S.palette.forEach(n=>opts.push({label:n, value:'tag:'+n, count:S.tagCounts[n]||0}));
   return opts;
 }
-function exMatches(){
-  return S.all.filter(e=>{
+function exList(){
+  let list=S.all.filter(e=>{
     const tags=e.tags||[];
-    if(!tags.length) return EXSEL.has('blank');
-    return tags.some(n=>EXSEL.has('tag:'+n));
-  }).length;
+    if(!tags.length){ if(!EXSEL.has('blank')) return false; }
+    else if(!tags.some(n=>EXSEL.has('tag:'+n))) return false;
+    if(EXF.event && !evNames(e).includes(EXF.event)) return false;
+    if(EXF.ai && aiVerdict(e)!==EXF.ai) return false;
+    return true;
+  });
+  if(EXF.sortBy) list=list.slice().sort((a,b)=>cmp(a,b,EXF.sortBy,EXF.sortDir));
+  return list;
 }
 function exAllSync(){
   const total=exOptions().length;
@@ -1093,13 +1107,34 @@ function exAllSync(){
 }
 function exSync(){
   exAllSync();
-  const n=exMatches();
+  const n=exList().length;
   $('#ex_count').textContent=n.toLocaleString()+' row'+(n===1?'':'s');
-  $('#ex_go').href=`/api/review/download/tagged?session_id=${S.sid}`+
-    `&filters=${encodeURIComponent(JSON.stringify([...EXSEL]))}`;
   $('#ex_go').style.pointerEvents = n ? '' : 'none';
   $('#ex_go').style.opacity = n ? '' : '.5';
 }
+function exEventOptions(){
+  const counts={};
+  S.all.forEach(e=>evNames(e).forEach(n=>{ counts[n]=(counts[n]||0)+1 }));
+  return [{label:'All events',value:''}].concat(
+    Object.keys(counts).sort((a,b)=>counts[b]-counts[a])
+      .map(n=>({label:`${n} (${counts[n]})`,value:n})));
+}
+function exAiOptions(){
+  const counts={violation:0,unconfirmed:0,clear:0,none:0};
+  S.all.forEach(e=>{ counts[aiVerdict(e)]++ });
+  return [{label:'AI: all',value:''},
+          {label:`AI: violation (${counts.violation})`,value:'violation'},
+          {label:`AI: unconfirmed (${counts.unconfirmed})`,value:'unconfirmed'},
+          {label:`AI: clear (${counts.clear})`,value:'clear'},
+          {label:`AI: none (${counts.none})`,value:'none'}];
+}
+combo($('#exf_sort'), ()=>S.sortOptions||[], o=>{ EXF.sortBy=o.value; exSync(); });
+$('#exf_dir').addEventListener('click',()=>{
+  EXF.sortDir=-EXF.sortDir;
+  $('#exf_dir').textContent = EXF.sortDir===1 ? '↑' : '↓';
+});
+combo($('#exf_event'), exEventOptions, o=>{ EXF.event=o.value; exSync(); });
+combo($('#exf_ai'), exAiOptions, o=>{ EXF.ai=o.value; exSync(); });
 function exRender(){
   const host=$('#ex_list'); host.innerHTML='';
   exOptions().forEach(o=>{
@@ -1122,6 +1157,12 @@ function exRender(){
 $('#btn-export').addEventListener('click',e=>{
   e.preventDefault();
   EXSEL=new Set(exOptions().map(o=>o.value));   // default: everything ticked
+  if(S.onlyTagged) EXSEL.delete('blank');       // dock's "Tagged only" carries over
+  EXF={sortBy:S.sortBy, sortDir:S.sortDir, event:S.fEvent, ai:S.fAI};
+  $('#exf_sort').value=(S.sortOptions||[]).find(o=>o.value===EXF.sortBy)?.label||'Sort: file order';
+  $('#exf_dir').textContent = EXF.sortDir===1 ? '↑' : '↓';
+  $('#exf_event').value=EXF.event ? (exEventOptions().find(o=>o.value===EXF.event)?.label||EXF.event) : 'All events';
+  $('#exf_ai').value=EXF.ai ? (exAiOptions().find(o=>o.value===EXF.ai)?.label||EXF.ai) : 'AI: all';
   exRender();
   $('#exmodal').classList.add('open');
 });
@@ -1132,7 +1173,17 @@ $('#ex_all').addEventListener('click',()=>{
 });
 $('#ex_close').addEventListener('click',()=>$('#exmodal').classList.remove('open'));
 $('#exmodal').addEventListener('click',e=>{ if(e.target===$('#exmodal')) $('#exmodal').classList.remove('open') });
-$('#ex_go').addEventListener('click',()=>{ setTimeout(()=>$('#exmodal').classList.remove('open'),300) });
+$('#ex_go').addEventListener('click',async e=>{
+  e.preventDefault();
+  const idxs=exList().map(ev=>ev.idx);
+  if(!idxs.length) return;
+  try{
+    await api('/api/review/export',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({session_id:S.sid, idxs})});
+    window.location=`/api/review/download/export?session_id=${S.sid}`;
+    setTimeout(()=>$('#exmodal').classList.remove('open'),300);
+  }catch(err){ toast('Export failed: '+err.message) }
+});
 
 /* ---- keyboard ---- */
 document.addEventListener('keydown',e=>{
