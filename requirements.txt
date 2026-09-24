@@ -16,3 +16,4 @@ python-dotenv         # reads CVAT credentials from .env
 
 # --- Convex backend --------------------------------------------------------
 convex                # Convex client — call deployment functions from Python
+onnxruntime           # run exported .onnx models in live inference

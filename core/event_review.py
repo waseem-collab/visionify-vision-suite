@@ -340,6 +340,13 @@ def _refresh_all_urls(s: Session):
         for c, value in enumerate(row):
             if looks_like_blob_url(value):
                 targets.append((r, c))
+            elif frame_extract.is_azblob_url(value):
+                try:
+                    s.rows[r][c] = frame_extract.azblob_to_url(value)
+                except Exception:
+                    continue
+                targets.append((r, c))
+                promote += 1
             elif looks_like_blob_path(value):
                 s.rows[r][c] = f"{host}/{container}/{value.strip().lstrip('/')}"
                 targets.append((r, c))
@@ -356,8 +363,11 @@ def _refresh_all_urls(s: Session):
     def work(item):
         r, c = item
         try:
-            new = frame_extract.refresh_sas_url(s.rows[r][c].strip(),
-                                                account_name, account_key)
+            # Per-account signing; returns the URL unchanged when we hold no
+            # key for its account — count that as a failure, like before.
+            new = frame_extract.freshen_url(s.rows[r][c].strip())
+            if new == s.rows[r][c].strip():
+                new = None
         except Exception:
             new = None
         with s.lock:

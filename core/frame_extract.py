@@ -74,6 +74,29 @@ def bare_to_url(value, account_name, container=None):
             f"{container}/{value.strip().lstrip('/')}")
 
 
+def is_azblob_url(value):
+    """An 'azblob://<account>@<container>/<path>' link (some event exports)."""
+    return isinstance(value, str) and value.strip().lower().startswith("azblob://")
+
+
+def azblob_to_url(value):
+    """'azblob://<account>@<container>/<path>' -> https URL on OUR configured
+    storage account. The link's own account name is dropped entirely — the
+    same blobs live in the account our connection string is for — so only the
+    container and blob path survive: https://<our-account>…/<container>/<path>.
+    Sign the result with refresh_sas_url/freshen_url like any blob URL."""
+    rest = value.strip()[len("azblob://"):].lstrip("/")
+    host, _, path = rest.partition("/")
+    _acct, _, container = host.partition("@")
+    if not container:
+        # 'azblob://<account>/<container>/<path>' variant — host is the account
+        container, _, path = path.partition("/")
+    if not (container and path.strip("/")):
+        raise ValueError(f"Unparseable azblob link: {value[:120]!r}")
+    name, _key = _sas_credentials()
+    return f"https://{name}.blob.core.windows.net/{container}/{path.lstrip('/')}"
+
+
 def status():
     with _lock:
         return dict(_state)
@@ -99,6 +122,42 @@ def _sas_credentials():
     if not (name and key):
         raise RuntimeError("Connection string lacks AccountName/AccountKey")
     return name, key
+
+
+def _all_sas_credentials():
+    """{account_name(lower): account_key} from EVERY env var whose name contains
+    AZURE_BLOB_CONNECTION_STRING — so links to other storage accounts (e.g.
+    azblob://stvisionaieventsuksouth@…) sign too once their connection string
+    is added to .env under any name like EVENTS_AZURE_BLOB_CONNECTION_STRING."""
+    convex_client.convex_url()  # side-effect: loads .env into os.environ
+    creds = {}
+    for var, val in os.environ.items():
+        if "AZURE_BLOB_CONNECTION_STRING" not in var or not val.strip():
+            continue
+        parts = dict(seg.split("=", 1) for seg in val.split(";") if "=" in seg)
+        name, key = parts.get("AccountName"), parts.get("AccountKey")
+        if name and key:
+            creds[name.strip().lower()] = key
+    return creds
+
+
+def freshen_url(url):
+    """Best effort: re-sign a blob URL with whichever account key we have for
+    ITS account (azblob:// links converted first). Non-blob URLs and accounts
+    we hold no key for pass through unchanged instead of failing."""
+    try:
+        if is_azblob_url(url):
+            url = azblob_to_url(url)
+        host = urlsplit(url).netloc.lower()
+        if not host.endswith(".blob.core.windows.net"):
+            return url
+        account = host.split(".", 1)[0]
+        key = _all_sas_credentials().get(account)
+        if key:
+            return refresh_sas_url(url, account, key)
+    except Exception:
+        pass
+    return url
 
 
 def refresh_sas_url(url, account_name, account_key):
@@ -218,9 +277,10 @@ def list_models():
     out = []
     root = paths.MODELS_DIR
     if root.is_dir():
-        for pt in root.rglob("*.pt"):
-            rel = str(pt.relative_to(root))
-            out.append({"label": rel, "value": str(pt)})
+        for pattern in ("*.pt", "*.onnx"):
+            for pt in root.rglob(pattern):
+                rel = str(pt.relative_to(root))
+                out.append({"label": rel, "value": str(pt)})
     out.sort(key=lambda m: (m["label"].count("/"), m["label"].lower()))
     return out
 
@@ -266,7 +326,10 @@ def _run(csv_path, column, frames, batch, mode, model_path):
     if mode == "crops":
         try:
             from ultralytics import YOLO
-            model = YOLO(model_path)
+            if str(model_path).lower().endswith(".onnx"):
+                model = YOLO(model_path, task="detect")
+            else:
+                model = YOLO(model_path)
         except Exception as exc:
             _set(running=False, done=True, error=f"Could not load model: {exc}")
             return
@@ -281,6 +344,13 @@ def _run(csv_path, column, frames, batch, mode, model_path):
         v = (row.get(column) or "").strip()
         if v.lower().startswith("http"):
             urls.append(v)
+        elif is_azblob_url(v):
+            try:
+                # azblob://…/container/path -> https on our account (signed later)
+                urls.append(azblob_to_url(v))
+                promoted += 1
+            except Exception:
+                pass
         elif is_bare_blob_path(v):
             # bare container-relative path -> full URL (then signed like the rest)
             urls.append(bare_to_url(v, account_name))
@@ -327,14 +397,12 @@ def _run(csv_path, column, frames, batch, mode, model_path):
         if _stop_evt.is_set():
             counters["cancelled"] += 1
             continue
-        try:
-            fresh = refresh_sas_url(url, account_name, account_key)
-            counters["sas"] += 1
-            refreshed.append((fresh, stem, wanted))
-        except Exception as exc:
-            counters["failed"] += 1
-            if len(errors) < 25:
-                errors.append(f"{stem}: SAS refresh failed: {exc}")
+        # Signs with whichever account key matches the URL; URLs of accounts
+        # we hold no key for pass through as-is (the download phase surfaces
+        # any real auth error instead of skipping the row here).
+        fresh = freshen_url(url)
+        counters["sas"] += 1
+        refreshed.append((fresh, stem, wanted))
         _set(sas_refreshed=counters["sas"], failed=counters["failed"],
              cancelled=counters["cancelled"], errors=list(errors),
              message=f"Refreshing SAS… {counters['sas']}/{len(jobs)}")

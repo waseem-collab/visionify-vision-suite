@@ -7,6 +7,8 @@ import json
 import logging
 import os
 import sys
+import pickle
+import shutil
 import tempfile
 import threading
 import time
@@ -90,7 +92,7 @@ model_cache = {}
 state = {
     "person_model_path": ppe_inference.DEFAULT_PERSON_MODEL,
     "ppe_model_path": ppe_inference.DEFAULT_MODEL_PATH,
-    "sm_model_path": sm_cropper.DEFAULT_SINGLE_MODEL_PATH,
+    "sm_model_paths": [sm_cropper.DEFAULT_SINGLE_MODEL_PATH],
     "video_folder": str(Path.cwd()),
     "selected_video": "",
     # A remote video/stream URL (http/https/rtsp/rtmp). When set, it is streamed
@@ -104,11 +106,13 @@ state = {
     "sm_conf": 0.7,
     "frame_step": 1,
     "simulate_realtime": True,
+    "loop_playback": True,   # wrap to frame 0 at the end instead of pausing
+    "playback_speed": 1.0,   # realtime pacing multiplier (1.0 = native fps)
     "ppe_inside_person": True,
     # Which PPE class names to show as per-person status chips. None = all classes
     # of the selected model. A list means only those classes are shown.
     "ppe_classes": None,
-    # Same idea for the SM (single) model's own classes. None = all.
+    # Same idea for the SM models' own classes (union across all selected). None = all.
     "sm_classes": None,
     "playing": False,
 }
@@ -146,16 +150,81 @@ DISPLAY_PACE_FACTOR = 1.0           # playback pacing vs real time (1.0 = real t
 # LRU cap on annotated frames kept in RAM. Each entry is a JPEG (~50–200 KB), so
 # this bounds the cache to a few hundred MB. Kept well below the old 8000 because
 # on a CPU-only machine holding thousands of frames pushes RAM into swap and
-# freezes the box. With the bounded prerender below, the cache rarely fills.
+# freezes the box. Frames evicted from RAM survive on disk (below).
 CACHE_MAX_FRAMES = 1500
-# How far ahead of the playhead the prerender worker looks (frames, on the step
-# grid). It fills this window and then IDLES — instead of racing to annotate the
-# whole video, which pins every CPU core the moment a video is loaded (there is
-# no GPU to offload to). ~300 frames ≈ 10–15 s of lookahead at typical FPS.
+# Fallback lookahead window (frames, on the step grid) used only when the video
+# length is unknown (live stream) or the disk cache is full. Normally the worker
+# buffers the ENTIRE video: annotated frames spill to disk, so there is no 60 s
+# "buffered and stopped" ceiling — inference runs front to back exactly once.
 PRERENDER_AHEAD = 300
 
 frame_cache = OrderedDict()        # frame_idx -> (jpg_bytes, person_boxes); LRU order
 cache_state = {"cfg_key": "", "epoch": 0, "fill_cursor": 0}
+
+# ---- Disk spillover for annotated frames -----------------------------------
+# RAM holds only the hot CACHE_MAX_FRAMES; every annotated frame is also written
+# to disk so the whole video can be buffered once per config. Cleared whenever
+# the config changes (same lifetime as frame_cache). Guarded by cache_lock.
+DISK_CACHE_DIR = Path(tempfile.gettempdir()) / "inference_annot_cache"
+DISK_CACHE_MAX_BYTES = 8 * 1024 ** 3    # safety cap; past it, fall back to windowed prerender
+disk_index = {}                          # frame_idx -> file size in bytes
+disk_state = {"bytes": 0}
+
+
+def _disk_path(idx: int) -> Path:
+    return DISK_CACHE_DIR / f"{int(idx)}.pkl"
+
+
+def disk_clear():
+    """Wipe the on-disk frame cache. Holds cache_lock."""
+    disk_index.clear()
+    disk_state["bytes"] = 0
+    shutil.rmtree(DISK_CACHE_DIR, ignore_errors=True)
+    try:
+        DISK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+
+def disk_put(idx: int, jpg, boxes):
+    """Best-effort write-through of one annotated frame. Holds cache_lock."""
+    try:
+        path = _disk_path(idx)
+        tmp = path.with_suffix(".tmp")
+        with open(tmp, "wb") as f:
+            pickle.dump((jpg, boxes), f, protocol=pickle.HIGHEST_PROTOCOL)
+        os.replace(tmp, path)
+        size = path.stat().st_size
+        disk_state["bytes"] += size - disk_index.get(idx, 0)
+        disk_index[idx] = size
+    except Exception:
+        pass  # disk trouble never breaks playback — RAM copy still exists
+
+
+def disk_get(idx: int):
+    """Load one annotated frame from disk, or None. Holds cache_lock."""
+    if idx not in disk_index:
+        return None
+    try:
+        with open(_disk_path(idx), "rb") as f:
+            return pickle.load(f)
+    except Exception:
+        disk_remove(idx)  # corrupt/missing — let the worker redo it
+        return None
+
+
+def disk_remove(idx: int):
+    """Drop one frame from the disk cache. Holds cache_lock."""
+    size = disk_index.pop(idx, None)
+    if size is not None:
+        disk_state["bytes"] = max(0, disk_state["bytes"] - size)
+    try:
+        _disk_path(idx).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+disk_clear()   # a previous run's cache is stale (config unknown) — start clean
 
 # Capture owned solely by the prerender worker (sequential reads).
 _worker_cap = {"cap": None, "video": "", "pos": -2}
@@ -165,7 +234,7 @@ def compute_cfg_key() -> str:
     """Fingerprint of everything that changes rendering. Caller holds state_lock."""
     return "|".join(str(x) for x in (
         state["selected_video"], state["person_model_path"], state["ppe_model_path"],
-        state["sm_model_path"], state["person_conf"], state["ppe_conf"],
+        tuple(state["sm_model_paths"]), state["person_conf"], state["ppe_conf"],
         state["sm_conf"], state["ppe_inside_person"], state["frame_step"],
         state["ppe_classes"], state["sm_classes"],
     ))
@@ -175,6 +244,7 @@ def cache_sync_cfg(cfg_key: str) -> int:
     """Clear the cache if config changed. Returns current epoch. Holds cache_lock."""
     if cache_state["cfg_key"] != cfg_key:
         frame_cache.clear()
+        disk_clear()
         cache_state["cfg_key"] = cfg_key
         cache_state["fill_cursor"] = 0
         cache_state["epoch"] += 1
@@ -182,10 +252,18 @@ def cache_sync_cfg(cfg_key: str) -> int:
 
 
 def cache_get(idx: int):
-    """Return cached (jpg, boxes), marking it recently used. Holds cache_lock."""
+    """Return cached (jpg, boxes), marking it recently used. Falls back to the
+    disk copy (promoting it back into RAM) when evicted. Holds cache_lock."""
     item = frame_cache.get(idx)
     if item is not None:
         frame_cache.move_to_end(idx)
+        return item
+    item = disk_get(idx)
+    if item is not None:
+        frame_cache[idx] = item
+        frame_cache.move_to_end(idx)
+        while len(frame_cache) > CACHE_MAX_FRAMES:
+            frame_cache.popitem(last=False)
     return item
 
 
@@ -193,13 +271,14 @@ def cache_put(idx: int, jpg, boxes):
     """Store an annotated frame, evicting least-recently-used past the cap. Holds cache_lock."""
     frame_cache[idx] = (jpg, boxes)
     frame_cache.move_to_end(idx)
+    disk_put(idx, jpg, boxes)   # spillover: survives RAM eviction
     while len(frame_cache) > CACHE_MAX_FRAMES:
         frame_cache.popitem(last=False)
 
 
 def cached_ranges(step: int):
     """Cached frames grouped into contiguous [start, end] runs (on the step grid)."""
-    keys = sorted(frame_cache.keys())
+    keys = sorted(set(frame_cache) | set(disk_index))
     ranges = []
     for k in keys:
         if ranges and (k - ranges[-1][1]) == step:
@@ -213,19 +292,21 @@ def pick_next_to_annotate(playhead: int, step: int, total: int, fill_cursor: int
     """
     Choose the next frame to annotate. Holds cache_lock. Returns (idx, new_cursor).
 
-    Strategy: fill only a BOUNDED window ahead of the playhead
-    (PRERENDER_AHEAD frames), then stop. While playing, the playhead advances and
-    the window slides with it — so there is always at most a window's worth of
-    work pending, never the whole video. While paused it fills the window once and
-    then idles. This is what keeps the worker from pinning every CPU core (there is
-    no GPU here). Scrubbing outside the window re-renders on demand and re-caches.
+    Strategy: buffer the WHOLE video ahead of the playhead — annotated frames
+    spill to disk, so RAM stays bounded while inference runs front to back
+    exactly once per config. Only when the video length is unknown (live
+    stream) or the disk cache hit its safety cap do we fall back to a bounded
+    sliding window of PRERENDER_AHEAD frames.
 
-    Returns (None, cursor) when the window is fully cached (nothing to do now).
+    Returns (None, cursor) when everything in range is cached (nothing to do).
     """
     start = max(int(playhead), 0)
-    limit = start + PRERENDER_AHEAD * step
-    if total > 0:
-        limit = min(limit, total - 1)
+    if total > 0 and disk_state["bytes"] < DISK_CACHE_MAX_BYTES:
+        limit = total - 1                        # buffer the entire video
+    else:
+        limit = start + PRERENDER_AHEAD * step   # unknown length / disk full
+        if total > 0:
+            limit = min(limit, total - 1)
 
     # The cursor rides forward as we fill; a seek (or the playhead moving back)
     # can leave it past the window, so snap it back to the window start.
@@ -234,7 +315,7 @@ def pick_next_to_annotate(playhead: int, step: int, total: int, fill_cursor: int
         c = start
 
     while c <= limit:
-        if c not in frame_cache:
+        if c not in frame_cache and c not in disk_index:
             return c, c + step       # annotate c, advance the cursor past it
         c += step
 
@@ -379,17 +460,20 @@ def _fresh_blob_url(url: str) -> str:
     """For Azure blob links of our storage account, return the URL with a
     freshly minted SAS token — an expired token is the usual reason a stream
     URL that worked yesterday suddenly 403s. Bare container-relative paths
-    ("ANSA-McAL/.../raw/Camera_x.mp4") are promoted to full URLs first. Any
-    other URL — or missing credentials — passes through unchanged."""
+    ("ANSA-McAL/.../raw/Camera_x.mp4") and azblob://account@container/path
+    links are promoted to full URLs first. Any other URL — or missing
+    credentials — passes through unchanged."""
     try:
         from core import frame_extract
+        if frame_extract.is_azblob_url(url):
+            # azblob://account@container/path -> https, then signed below.
+            url = frame_extract.azblob_to_url(url)
         if not url.lower().startswith("http") and frame_extract.is_bare_blob_path(url):
-            name, key = frame_extract._sas_credentials()
-            return frame_extract.refresh_sas_url(
-                frame_extract.bare_to_url(url, name), name, key)
-        if ".blob.core.windows.net/" in url.lower():
-            name, key = frame_extract._sas_credentials()
-            return frame_extract.refresh_sas_url(url, name, key)
+            name, _key = frame_extract._sas_credentials()
+            url = frame_extract.bare_to_url(url, name)
+        # Signs with the key matching the URL's own storage account (any
+        # *AZURE_BLOB_CONNECTION_STRING* in .env); otherwise passes through.
+        return frame_extract.freshen_url(url)
     except Exception:
         pass
     return url
@@ -489,7 +573,7 @@ def discover_pt_models(root_dirs: list[str]) -> list[str]:
             continue
         for dirpath, _, filenames in os.walk(root):
             for filename in filenames:
-                if filename.lower().endswith(".pt"):
+                if filename.lower().endswith((".pt", ".onnx")):
                     found.add(str(Path(dirpath) / filename))
     return sorted(found)
 
@@ -512,17 +596,24 @@ def discover_model_packages(models_dir: Path) -> list[tuple[str, str]]:
         if not child.is_dir():
             continue
         pt_files: list[Path] = []
+        onnx_files: list[Path] = []
         for dirpath, _, filenames in os.walk(child):
             for fn in filenames:
                 if fn.lower().endswith(".pt"):
                     pt_files.append(Path(dirpath) / fn)
-        if not pt_files:
+                elif fn.lower().endswith(".onnx"):
+                    onnx_files.append(Path(dirpath) / fn)
+        if not pt_files and not onnx_files:
             continue
-        non_yolo = [p for p in pt_files if not _is_generic_yolo_pt(p)]
-        candidates = non_yolo if non_yolo else pt_files
-        candidates.sort(key=lambda p: (len(p.parts), str(p).lower()))
-        chosen = str(candidates[0].resolve())
-        packages.append((child.name, chosen))
+        if pt_files:
+            non_yolo = [p for p in pt_files if not _is_generic_yolo_pt(p)]
+            candidates = non_yolo if non_yolo else pt_files
+            candidates.sort(key=lambda p: (len(p.parts), str(p).lower()))
+            packages.append((child.name, str(candidates[0].resolve())))
+        if onnx_files:
+            onnx_files.sort(key=lambda p: (len(p.parts), str(p).lower()))
+            label = child.name if not pt_files else f"{child.name} · onnx"
+            packages.append((label, str(onnx_files[0].resolve())))
     return packages
 
 
@@ -537,6 +628,12 @@ def load_settings():
         for key in list(state.keys()):
             if key in loaded:
                 state[key] = loaded[key]
+        # Migrate pre-multi-select settings: a single "sm_model_path" string.
+        if "sm_model_paths" not in loaded and isinstance(loaded.get("sm_model_path"), str):
+            old = loaded["sm_model_path"]
+            state["sm_model_paths"] = [] if old == NONE_MODEL_VALUE else [old]
+        if not isinstance(state.get("sm_model_paths"), list):
+            state["sm_model_paths"] = []
     except (OSError, json.JSONDecodeError):
         return
 
@@ -551,7 +648,12 @@ def save_settings():
 
 def get_or_load_model(model_path: str):
     if model_path not in model_cache:
-        model_cache[model_path] = YOLO(model_path)
+        if str(model_path).lower().endswith(".onnx"):
+            # Exported ONNX weights run through onnxruntime; the task hint is
+            # required when the export lacks task metadata.
+            model_cache[model_path] = YOLO(model_path, task="detect")
+        else:
+            model_cache[model_path] = YOLO(model_path)
     return model_cache[model_path]
 
 
@@ -571,6 +673,7 @@ def release_capture():
     """Tear down the annotation cache + worker capture. Does NOT change playing."""
     with cache_lock:
         frame_cache.clear()
+        disk_clear()
         cache_state["cfg_key"] = ""
         cache_state["epoch"] += 1
     if _worker_cap["cap"] is not None:
@@ -860,10 +963,22 @@ def run_ppe(
     return annotated, person_boxes
 
 
-def run_sm(frame, sm_model, sm_conf, selected_classes=None):
-    annotated, det_count = sm_cropper.draw_detections(frame, sm_model, sm_conf,
-                                                      selected_classes=selected_classes)
-    draw_hud(annotated, [f"SM  Detections: {det_count}"], COLOR_SM, align="right")
+# One distinct box color per selected SM model (cycles if more are selected).
+SM_MODEL_COLORS = [(0, 255, 0), (255, 170, 0), (0, 170, 255), (255, 0, 255), (0, 255, 255)]
+
+
+def run_sm(frame, sm_specs, sm_conf, selected_classes=None):
+    """Run every selected SM model on the frame — ``sm_specs`` is a list of
+    (label, model) — drawing each model's detections in its own color and one
+    combined HUD with the per-model counts."""
+    annotated, lines = frame, []
+    for i, (label, model) in enumerate(sm_specs):
+        color = SM_MODEL_COLORS[i % len(SM_MODEL_COLORS)]
+        annotated, det_count = sm_cropper.draw_detections(
+            annotated, model, sm_conf, selected_classes=selected_classes, color=color)
+        lines.append(f"SM {label}: {det_count}" if len(sm_specs) > 1
+                     else f"SM  Detections: {det_count}")
+    draw_hud(annotated, lines, COLOR_SM, align="right")
     return annotated
 
 
@@ -901,6 +1016,22 @@ def build_model_package_options_html(
     return "".join(options)
 
 
+def build_sm_model_checks_html(packages: list[tuple[str, str]], selected_paths) -> str:
+    """Checkbox rows for the multi-select SM model picker (any number checked)."""
+    sel = set(selected_paths or [])
+    rows = []
+    for folder_name, pt_path in packages:
+        checked = " checked" if pt_path in sel else ""
+        label = html.escape(folder_name)
+        value = html.escape(pt_path, quote=True)
+        tip = html.escape(Path(pt_path).name, quote=True)
+        rows.append(
+            f'<label class="cls-row" title="{tip}"><input type="checkbox" class="sm-model" '
+            f'value="{value}"{checked} />{label}</label>'
+        )
+    return "".join(rows) or '<div class="cls-empty">No model packages</div>'
+
+
 def build_ppe_classes_html(class_names: list[str], selected, css_class="ppe-cls") -> str:
     """Checkbox rows for a model-class picker. selected=None => all checked."""
     sel_set = None if selected is None else set(selected)
@@ -921,7 +1052,7 @@ def snapshot_inference_cfg(frame_idx: int) -> dict:
     return {
         "person_model_path": state["person_model_path"],
         "ppe_model_path": state["ppe_model_path"],
-        "sm_model_path": state["sm_model_path"],
+        "sm_model_paths": list(state["sm_model_paths"]),
         "person_conf": float(state["person_conf"]),
         "ppe_conf": float(state["ppe_conf"]),
         "sm_conf": float(state["sm_conf"]),
@@ -966,9 +1097,13 @@ def annotate_frame(frame, cfg: dict):
                 )
                 ran_any = True
 
-            if cfg["sm_model_path"] != NONE_MODEL_VALUE:
-                sm_model = get_or_load_model(cfg["sm_model_path"])
-                out = run_sm(out, sm_model, cfg["sm_conf"], cfg["sm_classes"])
+            sm_paths = [p for p in cfg["sm_model_paths"] if p and p != NONE_MODEL_VALUE]
+            if sm_paths:
+                sm_specs = [
+                    (Path(sp).parent.name or Path(sp).stem, get_or_load_model(sp))
+                    for sp in sm_paths
+                ]
+                out = run_sm(out, sm_specs, cfg["sm_conf"], cfg["sm_classes"])
                 ran_any = True
 
         if not ran_any:
@@ -1338,6 +1473,8 @@ def mjpeg_generator():
         with state_lock:
             playing = bool(state["playing"])
             realtime = bool(state["simulate_realtime"])
+            loop = bool(state.get("loop_playback", True))
+            speed = float(state.get("playback_speed", 1.0) or 1.0)
             fps = float(runtime["fps"]) if runtime["fps"] > 0 else 25.0
             step = max(int(state["frame_step"]), 1)
             cur = runtime["frame_idx"]
@@ -1348,9 +1485,20 @@ def mjpeg_generator():
         if playing:
             nxt = 0 if cur < 0 else cur + step
             if total > 0 and nxt > total - 1:
-                with state_lock:
-                    state["playing"] = False  # reached the end
-            else:
+                if loop:
+                    # Loop: wrap the playhead to the start and keep going.
+                    # The prerender worker follows the playhead, so point it
+                    # (and the fill cursor) back at frame 0.
+                    nxt = None
+                    with state_lock:
+                        runtime["frame_idx"] = -1
+                    with cache_lock:
+                        cache_state["fill_cursor"] = 0
+                else:
+                    nxt = None
+                    with state_lock:
+                        state["playing"] = False  # reached the end
+            if nxt is not None:
                 with cache_lock:
                     item = cache_get(nxt)
                 if item is not None:
@@ -1377,7 +1525,7 @@ def mjpeg_generator():
             )
 
         if playing and realtime and advanced:
-            time.sleep(max(0.0, (step / fps) * DISPLAY_PACE_FACTOR))
+            time.sleep(max(0.0, (step / fps) * DISPLAY_PACE_FACTOR / max(speed, 0.05)))
         else:
             time.sleep(0.02 if playing else 0.05)
 
@@ -1406,11 +1554,13 @@ def _render_inference_page():
             allowed_pkg.add(NONE_MODEL_VALUE)
             if state["ppe_model_path"] not in allowed_pkg:
                 state["ppe_model_path"] = package_paths[0]
-            if state["sm_model_path"] not in allowed_pkg:
-                state["sm_model_path"] = package_paths[0]
+            state["sm_model_paths"] = [
+                p for p in state["sm_model_paths"]
+                if p in allowed_pkg and p != NONE_MODEL_VALUE
+            ]
         else:
             state["ppe_model_path"] = NONE_MODEL_VALUE
-            state["sm_model_path"] = NONE_MODEL_VALUE
+            state["sm_model_paths"] = []
         if all_pt:
             allowed_pt = set(all_pt)
             allowed_pt.add(NONE_MODEL_VALUE)
@@ -1420,7 +1570,7 @@ def _render_inference_page():
             state["person_model_path"] = NONE_MODEL_VALUE
         person_model_options_html = build_model_options_html(all_pt, state["person_model_path"])
         ppe_model_options_html = build_model_package_options_html(packages, state["ppe_model_path"])
-        sm_model_options_html = build_model_package_options_html(packages, state["sm_model_path"])
+        sm_model_checks_html = build_sm_model_checks_html(packages, state["sm_model_paths"])
         discovered_lines = [
             f"{name} → {Path(pt).name}" for name, pt in packages
         ]
@@ -1432,7 +1582,7 @@ def _render_inference_page():
         save_settings()
         ppe_model_path = state["ppe_model_path"]
         ppe_selected_classes = state["ppe_classes"]
-        sm_model_path_val = state["sm_model_path"]
+        sm_model_paths_val = list(state["sm_model_paths"])
         sm_selected_classes = state["sm_classes"]
         video_folder_val = state["video_folder"]
         selected_video_val = state["selected_video"]
@@ -1443,13 +1593,19 @@ def _render_inference_page():
         sm_conf_val = state["sm_conf"]
         frame_step_val = state["frame_step"]
         simulate_realtime_val = state["simulate_realtime"]
+        loop_playback_val = state.get("loop_playback", True)
+        playback_speed_val = state.get("playback_speed", 1.0)
         ppe_inside_val = state["ppe_inside_person"]
 
     # Loading the PPE model to read its class list can be slow, so do it outside
     # state_lock. Populates the "Classes" picker beside the PPE model dropdown.
     ppe_class_names = get_ppe_class_names(ppe_model_path)
     ppe_classes_html = build_ppe_classes_html(ppe_class_names, ppe_selected_classes)
-    sm_class_names = get_ppe_class_names(sm_model_path_val)
+    sm_class_names = []       # union across all selected SM models, in order
+    for _p in sm_model_paths_val:
+        for _n in get_ppe_class_names(_p):
+            if _n not in sm_class_names:
+                sm_class_names.append(_n)
     sm_classes_html = build_ppe_classes_html(sm_class_names, sm_selected_classes, "sm-cls")
 
     template = """
@@ -1734,6 +1890,7 @@ input[type=checkbox]{width:17px;height:17px;accent-color:var(--hivis);cursor:poi
   padding:2px 6px 9px;border-bottom:1px solid var(--line);}
 .cls-grid{display:grid;grid-template-columns:1fr 1fr;gap:1px 12px;max-height:300px;overflow-y:auto;}
 .cls-grid .cls-row{text-transform:capitalize;}
+.sm-models{grid-template-columns:1fr;max-height:150px;border:1px solid var(--line-2);border-radius:8px;padding:2px 4px;}
 .cls-grid input[type=checkbox]{flex:0 0 auto;}
 
 /* Toast */
@@ -1819,6 +1976,7 @@ input[type=checkbox]{width:17px;height:17px;accent-color:var(--hivis);cursor:poi
             </div>
             <button class="t-btn" onclick="seekBy(1,'frame')" title="Next frame (Right arrow)">Frame ›</button>
             <button class="t-btn" onclick="seekBy(5,'sec')" title="Forward 5 seconds">5s »</button>
+            <button class="t-btn" id="speed_btn" onclick="cycleSpeed()" title="Playback speed — click to cycle">1×</button>
             <span class="frame-jump" title="Type a frame number and press Enter to jump there">
               <label for="frame_jump">Frame</label>
               <input id="frame_jump" type="number" min="0" step="1" placeholder="#" inputmode="numeric" />
@@ -1843,7 +2001,7 @@ input[type=checkbox]{width:17px;height:17px;accent-color:var(--hivis);cursor:poi
         <div class="stack">
           <div class="field"><label for="person_model_path">Person model</label><select id="person_model_path">__PERSON_OPTIONS__</select></div>
           <div class="field"><label for="ppe_model_path">PPE model</label><select id="ppe_model_path">__PPE_OPTIONS__</select></div>
-          <div class="field"><label for="sm_model_path">SM model</label><select id="sm_model_path">__SM_OPTIONS__</select></div>
+          <div class="field"><label>SM models</label><div id="sm_models_list" class="cls-grid sm-models">__SM_MODEL_CHECKS__</div></div>
           <label class="toggle-row" for="ppe_inside_person"><input id="ppe_inside_person" type="checkbox" __PPE_INSIDE_CHECKED__ />Detect PPE only inside person box</label>
         </div>
       </div>
@@ -1904,6 +2062,7 @@ input[type=checkbox]{width:17px;height:17px;accent-color:var(--hivis);cursor:poi
           <div class="grid-2">
             <div class="field"><label for="frame_step">Frame step</label><input id="frame_step" type="number" min="1" max="60" step="1" value="__FRAME_STEP__" /></div>
             <div class="field"><label for="simulate_realtime">Realtime</label><select id="simulate_realtime"><option value="true" __RT_ENABLED_SEL__>Enabled</option><option value="false" __RT_DISABLED_SEL__>Disabled</option></select></div>
+            <div class="field"><label for="loop_playback">Loop</label><select id="loop_playback"><option value="true" __LOOP_ENABLED_SEL__>Enabled</option><option value="false" __LOOP_DISABLED_SEL__>Disabled</option></select></div>
           </div>
         </div>
       </div>
@@ -2030,7 +2189,7 @@ __THEME_JS__
     return {
       person_model_path: document.getElementById("person_model_path").value,
       ppe_model_path: document.getElementById("ppe_model_path").value,
-      sm_model_path: document.getElementById("sm_model_path").value,
+      sm_model_paths: currentSmModels(),
       video_folder: document.getElementById("video_folder").value,
       selected_video: document.getElementById("selected_video").value,
       video_url: document.getElementById("video_url").value,
@@ -2040,6 +2199,8 @@ __THEME_JS__
       sm_conf: Number(document.getElementById("sm_conf").value),
       frame_step: Number(document.getElementById("frame_step").value),
       simulate_realtime: document.getElementById("simulate_realtime").value === "true",
+      loop_playback: document.getElementById("loop_playback").value === "true",
+      playback_speed: playbackSpeed,
       ppe_inside_person: document.getElementById("ppe_inside_person").checked,
       ppe_classes: currentPpeClasses(),
       sm_classes: currentSmClasses(),
@@ -2078,6 +2239,10 @@ __THEME_JS__
   }
 
   // ---- SM model class picker (mirror of the PPE one) ----
+  function currentSmModels() {
+    return Array.from(document.querySelectorAll("#sm_models_list .sm-model"))
+      .filter(cb => cb.checked).map(cb => cb.value);
+  }
   function currentSmClasses() {
     return Array.from(document.querySelectorAll("#sm_classes_list .sm-cls"))
       .filter(cb => cb.checked).map(cb => cb.value);
@@ -2100,12 +2265,17 @@ __THEME_JS__
     }).join("");
     updateSmAllToggle();
   }
-  async function reloadSmClasses(modelPath) {
-    try {
-      const res = await fetch("/api/ppe_classes?path=" + encodeURIComponent(modelPath));
-      const data = await res.json();
-      buildSmClassList(data.classes || [], null);
-    } catch (e) { buildSmClassList([], null); }
+  async function reloadSmClasses() {
+    // Union of class names across every checked SM model, in order.
+    const names = [];
+    for (const p of currentSmModels()) {
+      try {
+        const res = await fetch("/api/ppe_classes?path=" + encodeURIComponent(p));
+        const data = await res.json();
+        for (const n of (data.classes || [])) if (!names.includes(n)) names.push(n);
+      } catch (e) { /* skip an unloadable model */ }
+    }
+    buildSmClassList(names, null);
   }
 
   // Class cards only exist while their model is actually selected.
@@ -2114,7 +2284,7 @@ __THEME_JS__
     document.getElementById("classes_card").style.display =
       document.getElementById("ppe_model_path").value === NONE ? "none" : "";
     document.getElementById("sm_classes_card").style.display =
-      document.getElementById("sm_model_path").value === NONE ? "none" : "";
+      currentSmModels().length === 0 ? "none" : "";
   }
 
   async function saveConfig(refreshVideos = false) {
@@ -2134,6 +2304,25 @@ __THEME_JS__
     controlPendingUntil = Date.now() + 900;
     control(uiPlaying ? "start" : "pause");
   }
+  const SPEEDS = [0.25, 0.5, 1, 2, 4];
+  let playbackSpeed = Number("__PLAYBACK_SPEED__") || 1;
+  let lastKnownFps = 25;
+  function renderSpeedBtn(fps) {
+    if (fps) lastKnownFps = fps;
+    const btn = document.getElementById("speed_btn");
+    const target = lastKnownFps * playbackSpeed;
+    btn.textContent = playbackSpeed + "\u00d7 \u00b7 " + (target % 1 ? target.toFixed(1) : target) + "fps";
+    btn.title = "Playback speed \u2014 click to cycle (paces frames at " + playbackSpeed + "\u00d7 the video fps when Realtime is on)";
+  }
+  async function cycleSpeed() {
+    const i = SPEEDS.indexOf(playbackSpeed);
+    playbackSpeed = SPEEDS[(i + 1) % SPEEDS.length];
+    renderSpeedBtn();
+    await saveConfig(false);
+  }
+  window.cycleSpeed = cycleSpeed;
+  renderSpeedBtn();
+
   function seekBy(delta, unit) {
     fetch("/api/seek", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "relative", delta, unit }) }).catch(() => {});
   }
@@ -2187,6 +2376,7 @@ __THEME_JS__
     if (Date.now() > controlPendingUntil) { uiPlaying = !!s.playing; renderPlay(uiPlaying); reflectPlayState(uiPlaying); }
 
     const fps = s.fps || 25;
+    renderSpeedBtn(fps);
     document.getElementById("time_cur").textContent = formatTime(Math.max(s.frame_idx, 0) / fps);
     document.getElementById("time_total").textContent = formatTime(lastFrame / fps);
 
@@ -2604,7 +2794,7 @@ __THEME_JS__
   setVideos(allVideos, selectedVideo);
 
   // Themed dropdowns for every native select.
-  ["person_model_path", "ppe_model_path", "sm_model_path", "selected_video", "simulate_realtime"]
+  ["person_model_path", "ppe_model_path", "selected_video", "simulate_realtime", "loop_playback"]
     .forEach(id => enhanceSelect(document.getElementById(id)));
 
   // Click anywhere on a card header (not just the tiny button) to collapse/expand.
@@ -2612,7 +2802,7 @@ __THEME_JS__
     h.addEventListener("click", () => { const c = h.closest(".card"); if (c && c.id) toggleCard(c.id); });
   });
 
-  const ids = ["person_model_path", "video_folder", "selected_video", "video_url", "person_conf", "ppe_conf", "sm_conf", "frame_step", "simulate_realtime", "ppe_inside_person"];
+  const ids = ["person_model_path", "video_folder", "selected_video", "video_url", "person_conf", "ppe_conf", "sm_conf", "frame_step", "simulate_realtime", "loop_playback", "ppe_inside_person"];
   ids.forEach((id) => {
     const el = document.getElementById(id);
     const eventName = (id.includes("conf") || id === "frame_step") ? "input" : "change";
@@ -2626,9 +2816,10 @@ __THEME_JS__
     await reloadPpeClasses(e.target.value);
     await saveConfig(false);
   });
-  document.getElementById("sm_model_path").addEventListener("change", async (e) => {
+  document.getElementById("sm_models_list").addEventListener("change", async (e) => {
+    if (!e.target.classList.contains("sm-model")) return;
     updateClassCardVisibility();
-    await reloadSmClasses(e.target.value);
+    await reloadSmClasses();
     await saveConfig(false);
   });
 
@@ -2686,7 +2877,7 @@ __THEME_JS__
         "__APP_TITLE__": html.escape(APP_TITLE),
         "__PERSON_OPTIONS__": person_model_options_html,
         "__PPE_OPTIONS__": ppe_model_options_html,
-        "__SM_OPTIONS__": sm_model_options_html,
+        "__SM_MODEL_CHECKS__": sm_model_checks_html,
         "__PPE_CLASSES__": ppe_classes_html,
         "__SM_CLASSES__": sm_classes_html,
         "__PPE_INSIDE_CHECKED__": "checked" if ppe_inside_val else "",
@@ -2698,6 +2889,9 @@ __THEME_JS__
         "__SM_CONF__": str(sm_conf_val),
         "__FRAME_STEP__": str(frame_step_val),
         "__RT_ENABLED_SEL__": "selected" if simulate_realtime_val else "",
+        "__PLAYBACK_SPEED__": str(playback_speed_val),
+        "__LOOP_ENABLED_SEL__": "selected" if loop_playback_val else "",
+        "__LOOP_DISABLED_SEL__": "" if loop_playback_val else "selected",
         "__RT_DISABLED_SEL__": "selected" if not simulate_realtime_val else "",
         "__AI_DEFAULTS__": json.dumps(PPE_DEFAULT_PROMPTS),
         "__VIDEOS_JSON__": json.dumps(videos),
@@ -2731,7 +2925,7 @@ def api_config():
         for key in (
             "person_model_path",
             "ppe_model_path",
-            "sm_model_path",
+            "sm_model_paths",
             "video_folder",
             "selected_video",
             "video_url",
@@ -2741,6 +2935,8 @@ def api_config():
             "sm_conf",
             "frame_step",
             "simulate_realtime",
+            "loop_playback",
+            "playback_speed",
             "ppe_inside_person",
             "ppe_classes",
             "sm_classes",
@@ -2761,6 +2957,12 @@ def api_config():
             else:
                 state["selected_video"] = ""
 
+        # sm_model_paths: a list of package paths; anything else becomes [].
+        if isinstance(state["sm_model_paths"], list):
+            state["sm_model_paths"] = [str(p) for p in state["sm_model_paths"]]
+        else:
+            state["sm_model_paths"] = []
+
         # ppe_classes / sm_classes: None means "all"; else class-name strings.
         for _ck in ("ppe_classes", "sm_classes"):
             if state[_ck] is not None:
@@ -2772,6 +2974,10 @@ def api_config():
         state["person_conf"] = max(0.0, min(1.0, float(state["person_conf"])))
         state["ppe_conf"] = max(0.0, min(1.0, float(state["ppe_conf"])))
         state["sm_conf"] = max(0.0, min(1.0, float(state["sm_conf"])))
+        try:
+            state["playback_speed"] = max(0.05, min(16.0, float(state.get("playback_speed", 1.0))))
+        except (TypeError, ValueError):
+            state["playback_speed"] = 1.0
         state["frame_step"] = max(1, int(state["frame_step"]))
 
         all_pt = discover_pt_models([str(MODELS_DIR)])
@@ -2782,11 +2988,13 @@ def api_config():
             allowed_pkg.add(NONE_MODEL_VALUE)
             if state["ppe_model_path"] not in allowed_pkg:
                 state["ppe_model_path"] = package_paths[0]
-            if state["sm_model_path"] not in allowed_pkg:
-                state["sm_model_path"] = package_paths[0]
+            state["sm_model_paths"] = [
+                p for p in state["sm_model_paths"]
+                if p in allowed_pkg and p != NONE_MODEL_VALUE
+            ]
         else:
             state["ppe_model_path"] = NONE_MODEL_VALUE
-            state["sm_model_path"] = NONE_MODEL_VALUE
+            state["sm_model_paths"] = []
         if all_pt:
             allowed_pt = set(all_pt)
             allowed_pt.add(NONE_MODEL_VALUE)
@@ -2858,6 +3066,7 @@ def api_seek():
         has_video = bool(state["selected_video"])
         current_idx = runtime["frame_idx"]
         fps = float(runtime["fps"]) if runtime["fps"] > 0 else 25.0
+        step = max(int(state["frame_step"]), 1)
     if not has_video:
         return jsonify({"ok": False, "error": "Choose a valid video."}), 400
     if current_idx < 0:
@@ -2870,6 +3079,11 @@ def api_seek():
         unit = str(payload.get("unit", "frame")).lower()
         if unit == "sec":
             delta = int(round(delta * fps))
+        else:
+            # A "frame" here is one step-grid frame: seek_to_frame floors the
+            # target onto the grid, so a raw +1 from a grid frame would floor
+            # straight back to where we are (right arrow appearing dead).
+            delta = delta * step
         target_idx = current_idx + delta
 
     ok = seek_to_frame(target_idx)
@@ -2923,6 +3137,7 @@ def api_crop():
                 # serve the stale pre-draw image and the box would never show.
                 with cache_lock:
                     frame_cache.pop(frame_idx, None)
+                    disk_remove(frame_idx)
                 reseek_idx = frame_idx
             elif crop_type == "frame":
                 save_path = save_frame_image(runtime["last_raw_frame"], "SM")
@@ -3140,7 +3355,7 @@ def api_options():
                 "state": {
                     "person_model_path": state["person_model_path"],
                     "ppe_model_path": state["ppe_model_path"],
-                    "sm_model_path": state["sm_model_path"],
+                    "sm_model_paths": list(state["sm_model_paths"]),
                     "video_folder": state["video_folder"],
                     "selected_video": state["selected_video"],
                     "video_url": state["video_url"],
@@ -3150,6 +3365,8 @@ def api_options():
                     "sm_conf": state["sm_conf"],
                     "frame_step": state["frame_step"],
                     "simulate_realtime": state["simulate_realtime"],
+                    "loop_playback": state.get("loop_playback", True),
+                    "playback_speed": state.get("playback_speed", 1.0),
                     "ppe_inside_person": state["ppe_inside_person"],
                     "ppe_classes": state["ppe_classes"],
                     "sm_classes": state["sm_classes"],
@@ -3214,7 +3431,7 @@ def api_status():
     # Cache coverage as contiguous [start, end] ranges (separate lock, not nested).
     with cache_lock:
         ranges = cached_ranges(step)
-        loaded_count = len(frame_cache)
+        loaded_count = len(set(frame_cache) | set(disk_index))
     payload["loaded_ranges"] = ranges
     payload["loaded_count"] = loaded_count
     return jsonify(payload)
